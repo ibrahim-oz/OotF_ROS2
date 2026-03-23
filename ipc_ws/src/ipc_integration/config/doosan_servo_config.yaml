@@ -1,0 +1,82 @@
+###############################################
+# Modify all parameters related to servoing here
+###############################################
+use_gazebo: false # Whether the robot is started in a simulation environment
+
+###############################################
+# Parameter for publish_joint_positions_type
+###############################################
+# 0: JointPosition (default)
+# 1: JointTrajectory
+publish_joint_positions_type: 1
+publish_joint_positions: true
+
+###############################################
+# Parameter for move_group_name
+###############################################
+move_group_name: manipulator
+
+###############################################
+# Parameter for dimensions
+###############################################
+# The dimensions of the robot (usually 6 for a 6-DOF robot)
+num_joints: 6
+
+###############################################
+# Parameter for command_in_type
+###############################################
+# "unitless" -> in the range [-1:1], as if from a joystick
+# "speed_units" -> cmds are in m/s and rad/s
+command_in_type: "speed_units"
+
+###############################################
+# Parameter for scale
+###############################################
+# Scale parameters are only used if "unitless" command_in_type is selected
+linear_scale: 0.4  # Max linear velocity. Meters per publish_period. Unit is [m/s]
+rotational_scale: 0.8 # Max angular velocity. Rads per publish_period. Unit is [rad/s]
+joint_scale: 0.5       # Max joint angular velocity. Rads per publish_period. Unit is [rad/s]
+
+###############################################
+# Parameter for lower_singularity_threshold
+###############################################
+lower_singularity_threshold:  17.0 # Start decelerating when the condition number hits this (close to singularity)
+hard_stop_singularity_threshold: 30.0 # Stop when the condition number hits this
+joint_limit_margin: 0.1 # added as a buffer to joint limits [rad]
+
+###############################################
+# Parameter for low_pass_filter_coeff
+###############################################
+low_pass_filter_coeff: 2.0 # Larger --> trust the filtered data more, trust the raw data less
+
+###############################################
+# Parameter for publishing
+###############################################
+publish_period: 0.016666 # 1/60 Hz ~ 0.0166s
+
+###############################################
+# Parameter for incoming_command_timeout
+###############################################
+incoming_command_timeout:  0.1  # Stop servoing if X seconds elapse without a new command
+
+###############################################
+# Parameter for frame_id
+###############################################
+robot_link_command_frame:  base_link  # commands must be given in the frame of a robot link. Usually either the base or the end effector
+planning_frame: base_link
+ee_frame_name: link_6
+
+###############################################
+# Parameter for joint_topic
+###############################################
+joint_topic:  /joint_states
+status_topic: ~/status
+command_out_topic: /dsr01/joint_trajectory # The driver listens to this for trajectory commands
+
+###############################################
+# Parameter for check_collisions
+###############################################
+check_collisions: true # Check collisions?
+collision_check_rate: 10.0 # [Hz] Collision-checking can easily bog down a CPU if done too often.
+self_collision_proximity_threshold: 0.01 # Start decelerating when a self-collision is this far [m]
+scene_collision_proximity_threshold: 0.02 # Start decelerating when a scene collision is this far [m]
