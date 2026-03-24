@@ -4,7 +4,6 @@ import IOPanel from './components/IOPanel.jsx'
 import ProgramPanel from './components/ProgramPanel.jsx'
 import VariablesPanel from './components/VariablesPanel.jsx'
 import ViewerPanel from './components/ViewerPanel.jsx'
-import ToolsPanel from './components/ToolsPanel.jsx'
 import UserFramesPanel from './components/UserFramesPanel.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
 
@@ -232,7 +231,6 @@ const TABS = [
     { id: 'operation', label: 'Operation' },
     { id: 'io', label: 'I/O' },
     { id: 'variables', label: 'Variables' },
-    { id: 'tools', label: 'Tools' },
     { id: 'userframes', label: 'User Frames' },
     { id: 'program', label: 'Program' },
     { id: 'vision', label: 'Vision TCP' },
@@ -249,6 +247,7 @@ export default function App() {
 
     const [visionData, setVisionData] = useState('')
     const [visionBusy, setVisionBusy] = useState(false)
+    const [visionCommand, setVisionCommand] = useState('100;1')
 
     const [rosAlive, setRosAlive] = useState(false)
 
@@ -264,7 +263,7 @@ export default function App() {
     const onMsg = useCallback(d => {
         if (d.type === 'joint_states') { setJoints(d.positions_deg); setLastTs(d.timestamp) }
         if (d.type === 'tcp_pose') setTcp(d)
-        if (d.type === 'current_tool') setCurrentTool(d.name)
+        if (d.type === 'current_tool' || d.type === 'current_t') setCurrentTool(d.name)
         if (d.type === 'connection_status') setRosAlive(d.connected)
         if (d.type === 'log') setProgramLogs(prev => [...prev.slice(-199), { ts: Date.now(), msg: d.msg, type: 'info' }])
     }, [])
@@ -286,8 +285,8 @@ export default function App() {
     const doStop = async () => { addLog('STOP!', 'warning'); await post('/api/move/stop', {}); addLog('Stop sent.', 'warning') }
     const doVisionTrigger = async () => {
         setVisionBusy(true);
-        addLog('Triggering Vision...', 'info');
-        const r = await post('/api/vision/trigger', { command: 'TRIGGER' });
+        addLog(`Sending Vision Command: ${visionCommand}...`, 'info');
+        const r = await post('/api/vision/trigger', { command: visionCommand });
         if (r.success) {
             addLog(`Vision Trigger Success: ${r.message}`, 'success');
             if (r.vision_data) {
@@ -414,28 +413,75 @@ export default function App() {
                 {tab === 'operation' && <OperationPanel ros={ros} speed={globalSpeed} setSpeed={setGlobalSpeed} joints={joints} tcp={tcp} currentTool={currentTool} programLogs={programLogs} />}
                 {tab === 'io' && <IOPanel ros={ros} />}
                 {tab === 'variables' && <VariablesPanel />}
-                {tab === 'tools' && <ToolsPanel />}
                 {tab === 'userframes' && <UserFramesPanel ros={ros} />}
                 {tab === 'program' && <ProgramPanel ros={ros} />}
-                {tab === 'vision' && (
-                    <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                        <div className="card-title">Vision TCP Integration (192.168.137.50)</div>
-                        <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Send a trigger command to the vision PC and read the incoming string data.</p>
+                {tab === 'vision' && (() => {
+                    let parsedUI = null;
+                    if (visionData) {
+                        const items = visionData.split(';').filter(x => x !== '');
+                        if (items.length >= 20) {
+                            const pick = items.slice(3, 9).map(Number);
+                            const place = items.slice(13, 19).map(Number);
+                            parsedUI = (
+                                <div style={{ display: 'flex', gap: 20, marginTop: 16 }}>
+                                    <div style={{ flex: 1, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
+                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Pick Point</div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                                            <div><span style={{color: 'var(--text-3)'}}>X:</span> {pick[0]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Y:</span> {pick[1]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Z:</span> {pick[2]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Rx:</span> {pick[3]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Ry:</span> {pick[4]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Rz:</span> {pick[5]}</div>
+                                        </div>
+                                    </div>
+                                    <div style={{ flex: 1, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
+                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Place Point</div>
+                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                                            <div><span style={{color: 'var(--text-3)'}}>X:</span> {place[0]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Y:</span> {place[1]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Z:</span> {place[2]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Rx:</span> {place[3]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Ry:</span> {place[4]}</div>
+                                            <div><span style={{color: 'var(--text-3)'}}>Rz:</span> {place[5]}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        }
+                    }
+                    return (
+                        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                            <div className="card-title">Vision TCP Integration (192.168.137.110:50005)</div>
+                            <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Send a custom command to the vision server and read the incoming string data.</p>
+                            
+                            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                                <input 
+                                    type="text" 
+                                    value={visionCommand} 
+                                    onChange={(e) => setVisionCommand(e.target.value)}
+                                    placeholder="Enter command (e.g. 100;1)"
+                                    style={{
+                                        width: '200px', background: 'var(--bg-base)', border: '1px solid var(--border)',
+                                        borderRadius: 6, padding: '9px 12px', color: 'var(--text-1)', fontFamily: 'monospace',
+                                        fontSize: '0.95rem', outline: 'none'
+                                    }}
+                                />
+                                <button className="btn btn-primary" style={{ padding: '10px 24px', fontSize: '0.95rem' }} onClick={doVisionTrigger} disabled={visionBusy}>
+                                    {visionBusy ? '⏳ Waiting for reply...' : '📷 Send Command'}
+                                </button>
+                            </div>
 
-                        <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                            <button className="btn btn-primary" style={{ padding: '10px 24px', fontSize: '1rem' }} onClick={doVisionTrigger} disabled={visionBusy}>
-                                {visionBusy ? '⏳ Waiting for reply...' : '📷 Trigger Vision System (TCP)'}
-                            </button>
-                        </div>
-
-                        <div style={{ background: '#0a0f1c', border: '1px solid var(--border)', borderRadius: 8, padding: 16, minHeight: 120 }}>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Latest Vision Data Received:</div>
-                            <div style={{ fontFamily: 'monospace', color: 'var(--success)', fontSize: '1.2rem', wordBreak: 'break-all' }}>
-                                {visionData || <span style={{ color: 'var(--text-3)' }}>No data yet. Press trigger.</span>}
+                            <div style={{ background: '#0a0f1c', border: '1px solid var(--border)', borderRadius: 8, padding: 16, minHeight: 120 }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Raw Vision Data Received:</div>
+                                <div style={{ fontFamily: 'monospace', color: 'var(--success)', fontSize: '1.1rem', wordBreak: 'break-all' }}>
+                                    {visionData || <span style={{ color: 'var(--text-3)' }}>No data yet.</span>}
+                                </div>
+                                {parsedUI}
                             </div>
                         </div>
-                    </div>
-                )}
+                    );
+                })()}
             </div>
         </div>
     )

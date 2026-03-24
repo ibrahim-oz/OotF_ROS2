@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 class VisionTCPClient:
-    def __init__(self, host="192.168.137.50", port=9999):
+    def __init__(self, host="192.168.137.110", port=50005):
         self.host = host
         self.port = port
         self.reader = None

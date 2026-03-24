@@ -234,7 +234,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                         }}>
                             {currentTool || '—'}
                         </div>
-                        
+
                         {currentTool && toolOffsets[currentTool] && (
                             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px 12px', background: 'var(--bg-card2)', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)' }}>
                                 {['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'].map((axis, i) => (
@@ -323,7 +323,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                     </div>
                 </div>
 
-                <div className="card" style={{ flex: 1, minHeight: 300, maxHeight: 500, display: 'flex', flexDirection: 'column' }}>
+                <div className="card" style={{ flex: 1, maxWidth: 1000, minHeight: 300, maxHeight: 500, display: 'flex', flexDirection: 'column' }}>
                     <div className="card-title">Operation Log</div>
                     <div className="log-entries" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-base)', padding: 12, borderRadius: 6, border: '1px solid var(--border)' }}>
                         {log.length === 0 && <div className="log-entry">Waiting for operations...</div>}

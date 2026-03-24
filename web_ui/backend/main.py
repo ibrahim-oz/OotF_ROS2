@@ -66,6 +66,7 @@ event_loop    = None
 last_joint_time = 0.0   # epoch seconds of last joint_states msg
 CONNECTION_TIMEOUT = 3600.0  # seconds without joint_states → offline (increased to prevent premature disconnects)
 latest_speed = 100
+latest_solution_space = 0
 _startup_time = time.time()
 
 # ─── Mock IO State (for virtual emulator) ─────────────────────────
@@ -146,9 +147,12 @@ class RosBridge(Node):
         self.get_logger().info("Web bridge ready.")
 
     def _on_robot_state(self, msg: RobotStateRt):
-        global latest_speed, latest_tcp
+        global latest_speed, latest_tcp, latest_solution_space
         # Update latest_speed, clamped 1-100 as safety
         latest_speed = max(1, min(100, int(msg.operation_speed_rate)))
+        
+        # Track solution space
+        latest_solution_space = int(msg.solution_space)
         
         # Stream TCP pose from RT data instead of polling Service
         p = msg.actual_tcp_position
@@ -186,13 +190,16 @@ class RosBridge(Node):
                 if self.c_get_tool.service_is_ready():
                     tr = self.call(self.c_get_tool, GetCurrentTcp.Request(), timeout=1.0)
                     if tr and tr.success:
-                        self._pub({"type": "current_tool", "name": tr.info})
+                        self._pub({"type": "current_t", "name": tr.info})
             except Exception as e:
-                self.get_logger().warning(f"Tool poll error: {e}")
+                self.get_logger().warning(
+                    f"TCP poll error: {type(e).__name__}: {repr(e)}"
+                )
+            self.get_logger().warning(traceback.format_exc())
             import time; time.sleep(1.0)  # 1s for tool polling
 
     def poll_tcp_sync(self):
-        """Called from a dedicated background threat to poll the current tcp"""
+        """Called from a dedicated background thread to poll the current tcp"""
         while rclpy.ok():
             try:
                 if self.c_get_tcp.service_is_ready():
@@ -211,7 +218,7 @@ class RosBridge(Node):
                     res = self.call(self.c_posx, GetCurrentPosx.Request(), timeout=1.0)
                     #if res and res.success:
                     if res:
-                        p = res.pos
+                        p = res.task_pos_info[0].data
                         data = {
                             "type": "tcp_pose",
                             "x": round(p[0], 2),
@@ -225,8 +232,8 @@ class RosBridge(Node):
             except Exception as e:
                 self.get_logger().warning(f"TCP poll error: {e}")
 
-            import time
-            self.create_timer(0.2, self._tcp_timer_cb)
+          #  import time
+          #  self.create_timer(0.2, self._tcp_timer_cb)
 
     def _pub(self, data):
         if event_loop:
@@ -384,6 +391,10 @@ def api_move_tcp(b: MoveTcpReq):
 
 @app.get("/api/tcp")
 def api_tcp(): return latest_tcp or {"error": "no data"}
+
+@app.get("/api/solution_space")
+def api_solution_space():
+    return {"success": True, "solution_space": latest_solution_space}
 
 class TcpSetReq(BaseModel):
     name: str
@@ -707,8 +718,6 @@ def api_prog_state():
 
 # ─── Tools ───────────────────────────────────────────────────────
 
-active_tool = "tcp_gripper_A"
-
 TOOLS_FILE = "tools.json"
 
 def _default_tool_offsets():
@@ -765,7 +774,7 @@ def api_tool_offsets_set(b: ToolOffsetsReq):
 # ─── TCP Vision ───────────────────────────────────────────────────
 from vision_tcp import VisionTCPClient
 
-vision_client = VisionTCPClient(host="192.168.137.50", port=9999)
+vision_client = VisionTCPClient(host="192.168.137.110", port=50005)
 
 class VisionTriggerReq(BaseModel):
     command: str = "TRIGGER"

@@ -7,15 +7,16 @@ import requests
 
 import rclpy
 from rclpy.node import Node
+from rclpy.action import ActionClient
 
 from dsr_msgs2.srv import (
     SetCurrentTcp,
     SetCtrlBoxDigitalOutput,
     MoveJoint,
-    MoveLine,
     MoveStop,
     SetRefCoord,
 )
+from dsr_msgs2.action import MovelH2r
 
 # ------------------------------------------------------------------
 # CONFIG
@@ -130,6 +131,29 @@ def write_variable(name: str, value):
         tp_print(f"[VAR] Error writing {name}: {e}")
 
 
+def wait_for_movel(target_pose, tolerance=2.0, timeout=30.0, poll_interval=0.2):
+    """
+    Poll current TCP position from the backend and wait until
+    the robot is within `tolerance` mm/deg of `target_pose`.
+    """
+    start = time.time()
+    while (time.time() - start) < timeout:
+        try:
+            r = requests.get(f"{BACKEND_URL}/api/tcp", timeout=1.0)
+            d = r.json()
+            if "x" in d:
+                current = [d["x"], d["y"], d["z"], d["rx"], d["ry"], d["rz"]]
+                max_err = max(abs(current[i] - target_pose[i]) for i in range(6))
+                if max_err <= tolerance:
+                    tp_print(f"[WAIT] Target reached (max_err={max_err:.1f})")
+                    return True
+        except:
+            pass
+        time.sleep(poll_interval)
+    tp_print(f"[WAIT] Timeout after {timeout}s waiting for target!")
+    return False
+
+
 # ------------------------------------------------------------------
 # ROS SERVICE CLIENT
 # ------------------------------------------------------------------
@@ -141,20 +165,23 @@ class ServiceClientNode(Node):
         self.set_tcp_client = self.create_client(SetCurrentTcp, "/tcp/set_current_tcp")
         self.io_client = self.create_client(SetCtrlBoxDigitalOutput, "/io/set_ctrl_box_digital_output")
         self.movej_client = self.create_client(MoveJoint, "/motion/move_joint")
-        self.movel_client = self.create_client(MoveLine, "/motion/move_line")
         self.movestop_client = self.create_client(MoveStop, "/motion/move_stop")
         self.ref_client = self.create_client(SetRefCoord, "/motion/set_ref_coord")
+        self.movel_h2r_client = ActionClient(self, MovelH2r, "/motion/movel_h2r")
 
         for name, cli in [
             ("/tcp/set_current_tcp", self.set_tcp_client),
             ("/io/set_ctrl_box_digital_output", self.io_client),
             ("/motion/move_joint", self.movej_client),
-            ("/motion/move_line", self.movel_client),
             ("/motion/move_stop", self.movestop_client),
             ("/motion/set_ref_coord", self.ref_client),
         ]:
             while not cli.wait_for_service(timeout_sec=1.0):
                 self.get_logger().info(f"Waiting for {name} ...")
+
+        tp_print("Waiting for /motion/movel_h2r action...")
+        self.movel_h2r_client.wait_for_server()
+        tp_print("movel_h2r action ready!")
 
     def _call(self, cli, req):
         future = cli.call_async(req)
@@ -182,22 +209,33 @@ class ServiceClientNode(Node):
         req.sync_type = 0
         return self._call(self.movej_client, req)
 
-    def movel(self, pos, vel=None, acc=None, ref=0):
-        req = MoveLine.Request()
-        req.pos = [float(v) for v in pos]
-        req.vel = [100.0, 30.0] if vel is None else (
-            [float(v) for v in vel] if isinstance(vel, (list, tuple)) else [float(vel), 30.0]
-        )
-        req.acc = [200.0, 60.0] if acc is None else (
-            [float(v) for v in acc] if isinstance(acc, (list, tuple)) else [float(acc), 60.0]
-        )
-        req.time = 0.0
-        req.radius = 0.0
-        req.ref = int(ref)
-        req.mode = 0
-        req.blend_type = 0
-        req.sync_type = 0
-        return self._call(self.movel_client, req)
+    def movel_h2r(self, pos, vel=[100.0, 30.0], acc=[200.0, 60.0], timeout=60.0):
+        """Cartesian move via MovelH2r action. Blocks until motion completes."""
+        goal = MovelH2r.Goal()
+        goal.target_pos = [float(v) for v in pos[:6]]
+        goal.target_vel = [float(v) for v in vel]
+        goal.target_acc = [float(v) for v in acc]
+
+        send_future = self.movel_h2r_client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self, send_future)
+        goal_handle = send_future.result()
+
+        if not goal_handle.accepted:
+            tp_print("  movel_h2r goal REJECTED!")
+            return False
+
+        result_future = goal_handle.get_result_async()
+        start = time.time()
+        while not result_future.done() and (time.time() - start) < timeout:
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        if not result_future.done():
+            tp_print(f"  movel_h2r TIMEOUT after {timeout}s!")
+            goal_handle.cancel_goal_async()
+            time.sleep(1.0)
+            return False
+
+        return result_future.result().result.success
 
     def set_ref_coord(self, coord: int):
         req = SetRefCoord.Request()
@@ -238,8 +276,8 @@ def main():
         tp_print("SHEET_METALS started")
 
         # 1. Safe TCP for scanning
-        tp_print("Setting TCP to flange")
-        node.set_tcp("flange")
+        # tp_print("Setting TCP to flange")
+        # node.set_tcp("flange")
 
         # 2. Move to scan position
         tp_print("Moving to scan position")
@@ -247,10 +285,34 @@ def main():
 
         # 3. Trigger vision
         trigger_vision()
-        time.sleep(2.5)
+        time.sleep(2.0)
 
-        # 4. Request poses
-        raw_pose_response = request_pose_response()
+        # 4. Request poses — retry until status is +0200.0
+        MAX_RETRIES = 15
+        RETRY_INTERVAL = 2.0
+        raw_pose_response = ""
+        status1 = ""
+
+        for attempt in range(1, MAX_RETRIES + 1):
+            raw_pose_response = request_pose_response()
+            items = [x for x in raw_pose_response.split(";") if x != ""]
+            status1 = items[0] if len(items) > 0 else ""
+            tp_print(f"[VISION] Attempt {attempt}/{MAX_RETRIES} — Status1 = '{status1}'")
+
+            if status1 == "+0200.0":
+                tp_print("[VISION] Status OK (+0200.0). Proceeding with pick/place.")
+                break
+
+            tp_print(f"[VISION] Not ready yet, retrying in {RETRY_INTERVAL}s...")
+            time.sleep(RETRY_INTERVAL)
+        else:
+            # All retries exhausted without +0200.0
+            tp_print(f"[VISION] Status never reached +0200.0 after {MAX_RETRIES} attempts. Aborting.")
+            tp_print("Moving to HOME (J01) position...")
+            node.movej([0.0, 0.0, 90.0, 0.0, 90.0, -90.0], vel=30.0, acc=60.0)
+            tp_print("Job Done")
+            return
+
         pick_pose, place_pose = parse_pose_response(raw_pose_response)
 
         tp_print(f"[PARSED] pick_pose(base/world): {pick_pose}")
@@ -267,35 +329,55 @@ def main():
         tp_print(f"[PARSED] pre_pick_pose: {pre_pick_pose}")
         tp_print(f"[PARSED] pre_place_pose: {pre_place_pose}")
 
-        # 7. Set tool TCP for picking
-        tp_print("Setting TCP to EMH45B")
-        node.set_tcp("center_suction_pad_smc")
-
         # 8. Go near pick area
-        node.movej(unnamed, vel=50.0, acc=80.0)
+        tp_print(f"[MOVE] movej unnamed: {unnamed}")
+        r = node.movej(unnamed, vel=50.0, acc=80.0)
+        tp_print(f"[MOVE] movej unnamed result: {r}")
 
-        # 9. Pick in world/base frame
+        # 9. Pick in world/base frame (using movel_h2r action)
         tp_print("Picking part in base/world frame")
-        node.set_ref_coord(0)
-        node.movel(pre_pick_pose, vel=[100.0, 30.0], acc=[200.0, 60.0], ref=0)
-        node.movel(pick_pose, vel=[20.0, 20.0], acc=[50.0, 50.0], ref=0)
+
+        tp_print(f"[MOVE] movel_h2r pre_pick_pose: {pre_pick_pose}")
+        ok = node.movel_h2r(pre_pick_pose, vel=[100.0, 30.0], acc=[200.0, 60.0])
+        tp_print(f"[MOVE] movel_h2r pre_pick result: {ok}")
+
+        tp_print(f"[MOVE] movel_h2r pick_pose: {pick_pose}")
+        ok = node.movel_h2r(pick_pose, vel=[20.0, 10.0], acc=[50.0, 20.0])
+        tp_print(f"[MOVE] movel_h2r pick result: {ok}")
+
         tool_pick_on(node)
-        node.movel(pre_pick_pose, vel=[100.0, 30.0], acc=[200.0, 60.0], ref=0)
+
+        tp_print(f"[MOVE] movel_h2r pre_pick_pose (retreat): {pre_pick_pose}")
+        ok = node.movel_h2r(pre_pick_pose, vel=[100.0, 30.0], acc=[200.0, 60.0])
+        tp_print(f"[MOVE] movel_h2r pre_pick retreat result: {ok}")
 
         # 10. Travel
-        node.movej(unnamed, vel=50.0, acc=80.0)
-        node.movej(unnamed2, vel=50.0, acc=80.0)
+        r = node.movej(unnamed, vel=50.0, acc=80.0)
+        tp_print(f"[MOVE] movej unnamed result: {r}")
+        r = node.movej(unnamed2, vel=50.0, acc=80.0)
+        tp_print(f"[MOVE] movej unnamed2 result: {r}")
 
-        # 11. Place in user_coordinates_110
+        # 11. Place in user_coordinates_110 (using movel_h2r action)
         tp_print("Placing part in user_coordinates_110")
         node.set_ref_coord(PLACE_USER_FRAME)
-        node.movel(pre_place_pose, vel=[100.0, 30.0], acc=[200.0, 60.0], ref=PLACE_USER_FRAME)
-        node.movel(place_pose, vel=[20.0, 20.0], acc=[50.0, 50.0], ref=PLACE_USER_FRAME)
+
+        tp_print(f"[MOVE] movel_h2r pre_place_pose: {pre_place_pose}")
+        ok = node.movel_h2r(pre_place_pose, vel=[100.0, 30.0], acc=[200.0, 60.0])
+        tp_print(f"[MOVE] movel_h2r pre_place result: {ok}")
+
+        tp_print(f"[MOVE] movel_h2r place_pose: {place_pose}")
+        ok = node.movel_h2r(place_pose, vel=[20.0, 10.0], acc=[50.0, 20.0])
+        tp_print(f"[MOVE] movel_h2r place result: {ok}")
+
         tool_pick_off(node)
-        node.movel(pre_place_pose, vel=[100.0, 30.0], acc=[200.0, 60.0], ref=PLACE_USER_FRAME)
+
+        tp_print(f"[MOVE] movel_h2r pre_place_pose (retreat): {pre_place_pose}")
+        ok = node.movel_h2r(pre_place_pose, vel=[100.0, 30.0], acc=[200.0, 60.0])
+        tp_print(f"[MOVE] movel_h2r pre_place retreat result: {ok}")
 
         # 12. Retreat
-        node.movej(unnamed, vel=50.0, acc=80.0)
+        r = node.movej(unnamed, vel=50.0, acc=80.0)
+        tp_print(f"[MOVE] movej retreat result: {r}")
 
         tp_print("SHEET_METALS completed successfully")
 
