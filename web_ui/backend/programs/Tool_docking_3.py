@@ -42,6 +42,9 @@ UF_ID = 103
 ON  = 1
 OFF = 0
 
+def tp_print(msg):
+    print(msg, flush=True)
+
 class ServiceClientNode(Node):
     def __init__(self):
         super().__init__('tool_docking_3_node')
@@ -104,43 +107,54 @@ def main():
     node = ServiceClientNode()
     try:
         tp_print(f"TOOL_DOCKING_3: Using Robot's UF{UF_ID}")
+        print("start tool docking 3")
 
         # 1. Set TCP to flange (XYZ: 0,0,0,0,0,0) as requested
         tp_print("Setting TCP offset to 'flange' (XYZ: 0,0,0,0,0,0)...")
+        print("set tcp")
         node.set_tcp("flange")
 
         # 2. Home
         tp_print("Homing...")
+        print("homing")
         node.movej(home, vel=50.0, acc=80.0)
 
         # 3. Set Reference Coord to UF_ID
         tp_print(f"Switching to User Frame {UF_ID}...")
+        print("switching UF")
         node.set_ref_coord(UF_ID)
 
         # In between move to unnamed position?
         tp_print("Moving to unnamed position...")
+        print("movign unnamed pos")
         node.movej(unnamed, vel=30.0, acc=60.0)
 
         # 4. Move to approach (joint)
         tp_print("Moving away...")
+        print("moving away")
         node.movej(away, vel=30.0, acc=60.0)
 
         # 5. Open gripper
+        print("gripper on")
         node.set_do(8, ON)
         time.sleep(1)
 
         # 5. Set active reference coordinate to UF_ID
         tp_print(f"Setting active reference coordinate to UF{UF_ID}...")
+        print("set ref coord to UF")
         node.set_ref_coord(UF_ID)
 
         # 6. Cartesian moves in user_coordinate
         tp_print(f"Moving up (UF{UF_ID})...")
+        print("moving up")
         node.movel(up,      vel=[20.0, 10.0], acc=[60.0, 60.0], ref=UF_ID)
 
         tp_print(f"Moving out (UF{UF_ID})...")
+        print("moving out")
         node.movel(out,     vel=[20.0, 10.0], acc=[60.0, 60.0], ref=UF_ID)
 
         tp_print(f"Moving inside (UF{UF_ID})...")
+        print("moving inside")
         node.movel(inside,  vel=[20.0, 10.0], acc=[60.0, 60.0], ref=UF_ID)
 
         time.sleep(1)

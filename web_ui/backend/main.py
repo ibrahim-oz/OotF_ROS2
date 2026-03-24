@@ -33,6 +33,7 @@ from dsr_msgs2.msg import RobotStateRt
 
 from dsr_msgs2.srv import (
     GetCurrentPosx, SetCurrentTcp,
+    GetCurrentTcp,
     MoveJoint, MoveJointx, MoveLine,
     MoveSplineJoint,
     Jog,
@@ -140,6 +141,7 @@ class RosBridge(Node):
         self.c_set_uf1   = cli(SetUserCartCoord1,       "/force/set_user_cart_coord1")
         self.c_set_ref   = cli(SetRefCoord,             "/motion/set_ref_coord")
         self.c_get_tool  = cli(GetCurrentTool,          "/tool/get_current_tool")
+        self.c_get_tcp   = cli(GetCurrentTcp,           "/tcp/get_current_tcp")
 
         self.get_logger().info("Web bridge ready.")
 
@@ -182,12 +184,24 @@ class RosBridge(Node):
         while rclpy.ok():
             try:
                 if self.c_get_tool.service_is_ready():
-                    tr = self.call(self.c_get_tool, GetCurrentTool.Request(), timeout=1.0)
+                    tr = self.call(self.c_get_tool, GetCurrentTcp.Request(), timeout=1.0)
                     if tr and tr.success:
                         self._pub({"type": "current_tool", "name": tr.info})
             except Exception as e:
                 self.get_logger().warning(f"Tool poll error: {e}")
             import time; time.sleep(1.0)  # 1s for tool polling
+
+    def poll_tcp_sync(self):
+        """Called from a dedicated background threat to poll the current tcp"""
+        while rclpy.ok():
+            try:
+                if self.c_get_tcp.service_is_ready():
+                    tr = self.call(self.c_get_tcp, GetCurrentTcp.Request(), timeout=1.0)
+                    if tr and tr.success:
+                        self._pub({"type": "current_tcp", "name": tr.info})
+            except Exception as e:
+                self.get_logger().warning(f"Tcp poll error: {e}")
+            import time; time.sleep(1.0)  # 1s for tcp polling
 
     def tcp_poll_loop(self):
         """Continuously poll TCP pose via service (fallback when RT topic is empty)"""
@@ -775,6 +789,7 @@ def _ros_thread():
     ros_node = RosBridge()
     threading.Thread(target=ros_node.tcp_poll_loop, daemon=True).start()
     threading.Thread(target=ros_node.poll_tool_sync, daemon=True).start()
+    threading.Thread(target=ros_node.poll_tcp_sync, daemon=True).start()
     ex = MultiThreadedExecutor()
     ex.add_node(ros_node)
     ex.spin()

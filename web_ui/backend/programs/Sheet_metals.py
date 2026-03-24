@@ -215,22 +215,15 @@ class ServiceClientNode(Node):
 # ------------------------------------------------------------------
 
 def tool_pick_on(node: ServiceClientNode):
-    tp_print("[TOOL] Magnet ON")
-    node.set_do(index=1, value=ON)
-    node.set_do(index=2, value=OFF)
-    node.set_do(index=4, value=ON)
+    tp_print("[TOOL] Vakuum ON")
+    node.set_do(index=5, value=ON)
     time.sleep(0.5)
 
 
-def tool_release(node: ServiceClientNode):
-    tp_print("[TOOL] Release / demagnetize")
-    node.set_do(index=1, value=OFF)
-    node.set_do(index=2, value=OFF)
-    time.sleep(0.25)
-    node.set_do(index=2, value=ON)
-    node.set_do(index=4, value=ON)
+def tool_pick_off(node: ServiceClientNode):
+    tp_print("[TOOL] Vakuum OFF")
+    node.set_do(index=5, value=OFF)
     time.sleep(0.5)
-    node.set_do(index=2, value=OFF)
 
 
 # ------------------------------------------------------------------
@@ -254,7 +247,7 @@ def main():
 
         # 3. Trigger vision
         trigger_vision()
-        time.sleep(0.5)
+        time.sleep(2.5)
 
         # 4. Request poses
         raw_pose_response = request_pose_response()
@@ -276,7 +269,7 @@ def main():
 
         # 7. Set tool TCP for picking
         tp_print("Setting TCP to EMH45B")
-        node.set_tcp("EMH45B")
+        node.set_tcp("center_suction_pad_smc")
 
         # 8. Go near pick area
         node.movej(unnamed, vel=50.0, acc=80.0)
@@ -298,7 +291,7 @@ def main():
         node.set_ref_coord(PLACE_USER_FRAME)
         node.movel(pre_place_pose, vel=[100.0, 30.0], acc=[200.0, 60.0], ref=PLACE_USER_FRAME)
         node.movel(place_pose, vel=[20.0, 20.0], acc=[50.0, 50.0], ref=PLACE_USER_FRAME)
-        tool_release(node)
+        tool_pick_off(node)
         node.movel(pre_place_pose, vel=[100.0, 30.0], acc=[200.0, 60.0], ref=PLACE_USER_FRAME)
 
         # 12. Retreat
