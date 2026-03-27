@@ -73,6 +73,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
+import numpy as np
+from scipy.spatial.transform import Rotation as R
 
 # ─── App ─────────────────────────────────────────────────────────
 
@@ -181,11 +183,13 @@ def _cart_distance(a: Optional[List[float]], b: Optional[List[float]]) -> Option
 def _angles_distance(a: Optional[List[float]], b: Optional[List[float]]) -> Optional[float]:
     if a is None or b is None:
         return None
-    return math.sqrt(
-        (a[3] - b[3]) ** 2 +
-        (a[4] - b[4]) ** 2 +
-        (a[5] - b[5]) ** 2
-    )
+
+    dx = _angle_diff_deg(a[3], b[3])
+    dy = _angle_diff_deg(a[4], b[4])
+    dz = _angle_diff_deg(a[5], b[5])
+
+    return math.sqrt(dx**2 + dy**2 + dz**2)
+
 
 def _safe_list(x):
     try:
@@ -236,6 +240,51 @@ def _wait_until_tcp_reached(
                     return True, now_pose
         time.sleep(0.05)
     return False, _tcp_snapshot()
+
+
+def _angle_diff_deg(a: float, b: float) -> float:
+    d = a - b
+    while d > 180.0:
+        d -= 360.0
+    while d < -180.0:
+        d += 360.0
+    return d
+
+
+def _stable_euler(rx, ry, rz):
+    def wrap(a):
+        while a > 180.0:
+            a -= 360.0
+        while a < -180.0:
+            a += 360.0
+        return a
+
+    rx = wrap(rx)
+    ry = wrap(ry)
+    rz = wrap(rz)
+
+    # CRITICAL FIX (singularity)
+    if abs(abs(ry) - 180.0) < 0.5:
+        rx = 0.0
+
+    return [rx, ry, rz]
+
+def _compute_tool_dir(rx, ry, rz):
+    try:
+        r = R.from_euler('xyz', [rx, ry, rz], degrees=True)
+        z_axis = r.apply([0, 0, 1])
+        return [round(float(v), 4) for v in z_axis]
+    except:
+        return None
+
+def zyz_to_xyz(rx, ry, rz):
+    try:
+        r = R.from_euler('zyz', [rx, ry, rz], degrees=True)
+        xyz = r.as_euler('xyz', degrees=True)
+        return xyz.tolist()
+    except Exception as e:
+        print(f"[ZYZ→XYZ ERROR] {e}")
+        return [rx, ry, rz]
 
 
 # ─── ROS Bridge ──────────────────────────────────────────────────
@@ -294,14 +343,18 @@ class RosBridge(Node):
         latest_solution_space = int(msg.solution_space)
 
         p = msg.actual_tcp_position
+        rx0, ry0, rz0 = zyz_to_xyz(p[3], p[4], p[5])
+        rx, ry, rz = _stable_euler(rx0, ry0, rz0)
+        tool_dir = _compute_tool_dir(rx, ry, rz)
         latest_tcp = {
             "type": "tcp_pose",
             "x": round(p[0], 2),
             "y": round(p[1], 2),
             "z": round(p[2], 2),
-            "rx": round(p[3], 2),
-            "ry": round(p[4], 2),
-            "rz": round(p[5], 2),
+            "rx": round(rx, 2),
+            "ry": round(ry, 2),
+            "rz": round(rz, 2),
+            "tool_dir": tool_dir,
         }
         self._pub(latest_tcp)
 
@@ -366,14 +419,18 @@ class RosBridge(Node):
                             except:
                                 continue
                         global latest_tcp
+                        rx0, ry0, rz0 = zyz_to_xyz(p[3], p[4], p[5])
+                        rx, ry, rz = _stable_euler(rx0, ry0, rz0)
+                        tool_dir = _compute_tool_dir(rx, ry, rz)
                         latest_tcp = {
                             "type": "tcp_pose",
-                            "x": p[0],
-                            "y": p[1],
-                            "z": p[2],
-                            "rx": p[3],
-                            "ry": p[4],
-                            "rz": p[5],
+                            "x": round(p[0], 2),
+                            "y": round(p[1], 2),
+                            "z": round(p[2], 2),
+                            "rx": round(rx, 2),
+                            "ry": round(ry, 2),
+                            "rz": round(rz, 2),
+                            "tool_dir": tool_dir,
                         }
                         self._pub(latest_tcp)
             except Exception as e:
@@ -454,6 +511,7 @@ def api_ros_diagnostics():
         "latest_tcp_available": bool(latest_tcp),
         "services": {
             "move_joint": ros_node.c_move_j.service_is_ready(),
+            "move_jointx": ros_node.c_move_jx.service_is_ready(), 
             "move_line": ros_node.c_move_l.service_is_ready(),
             "get_current_posx": ros_node.c_posx.service_is_ready(),
             "jog": ros_node.c_jog.service_is_ready(),
@@ -563,6 +621,15 @@ def api_move_joint(b: MoveJointReq):
     )
     return {"success": r.success if r else False}
 
+class MoveJointXReq(BaseModel):
+    pos: list[float]
+    vel: float = 30.0
+    acc: float = 60.0
+    ref: int = 0
+    sync_type: int = 0
+    sol: int = 2
+
+
 class SetRefReq(BaseModel):
     coord: int
 
@@ -603,6 +670,13 @@ def api_speed(b: SpeedReq):
         latest_speed = req.speed
     return {"success": r.success if r else False}
 
+class MoveJointxReq(BaseModel):
+    pos: list[float]           # [X, Y, Z, Rx, Ry, Rz]
+    vel: float = 30.0
+    acc: float = 60.0
+    ref: int = 0
+    sync_type: int = 0
+    sol: int = 2               # IK solution space, 2 iyi bir başlangıç
 
 class MoveTcpReq(BaseModel):
     pos: list[float]           # [X, Y, Z, Rx, Ry, Rz]
@@ -611,6 +685,36 @@ class MoveTcpReq(BaseModel):
     ref: int = 0               # 0=BASE
     sync_type: int = 0
 
+@app.post("/api/move/jointx")
+def api_move_jointx(b: MoveJointxReq):
+    if not ros_node:
+        return {"success": False, "error": "ros_node is not ready"}
+
+    if len(b.pos) != 6:
+        return {"success": False, "error": "pos must contain 6 values [x,y,z,rx,ry,rz]"}
+
+    if not ros_node.c_move_jx.wait_for_service(timeout_sec=1.0):
+        return {"success": False, "error": "/motion/move_jointx service is not available"}
+
+    req = MoveJointx.Request()
+    req.pos = [float(v) for v in b.pos]
+    req.vel = float(b.vel)
+    req.acc = float(b.acc)
+    req.time = 0.0
+    req.radius = 0.0
+    req.ref = int(b.ref)
+    req.sol = int(b.sol)
+    req.mode = 0
+    req.blend_type = 0
+    req.sync_type = int(b.sync_type)
+
+    r = ros_node.call(
+        ros_node.c_move_jx,
+        req,
+        timeout=60.0 if b.sync_type == 0 else 5.0,
+    )
+
+    return {"success": r.success if r else False}
 
 @app.post("/api/move/tcp")
 def api_move_tcp(b: MoveTcpReq):

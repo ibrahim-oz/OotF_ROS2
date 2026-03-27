@@ -3,6 +3,7 @@
 import time
 import socket
 import requests
+from scipy.spatial.transform import Rotation as R
 
 # ------------------------------------------------------------------
 # CONFIG
@@ -22,8 +23,8 @@ PRE_PLACE_Z = 80.0
 PLACE_USER_FRAME = 110
 
 # FIXED TOOL ORIENTATION (downwards)
-FIX_RX = 90.0
-FIX_RY = 180.0
+# FIX_RX = 90.0
+# FIX_RY = 180.0
 
 # ------------------------------------------------------------------
 # UTILS
@@ -63,6 +64,24 @@ def offset_z(p, dz):
     q[2] += dz
     return q
 
+def zyz_to_xyz(p):
+    try:
+        r = R.from_euler('zyz', [p[3], p[4], p[5]], degrees=True)
+        xyz = r.as_euler('xyz', degrees=True)
+
+        return [p[0], p[1], p[2], xyz[0], xyz[1], xyz[2]]
+    except Exception as e:
+        tp(f"ZYZ->XYZ ERROR: {e}")
+        return p
+
+def normalize_local(p):
+    # sadece basit wrap
+    for i in [3, 4, 5]:
+        while p[i] > 180:
+            p[i] -= 360
+        while p[i] < -180:
+            p[i] += 360
+    return p
 
 # ------------------------------------------------------------------
 # BACKEND CONTROL
@@ -155,9 +174,14 @@ def main():
 
     pick, place = parse_pose(resp)
 
-    # 🔥 FIX ORIENTATION HERE
-    pick = fix_orientation(pick)
-    place = fix_orientation(place)
+    # FIX ORIENTATION HERE
+    # pick = fix_orientation(pick)
+    # place = fix_orientation(place)
+
+    pick = zyz_to_xyz(pick)
+    place = zyz_to_xyz(place)
+    pick = normalize_local(pick)
+    place = normalize_local(place)
 
     tp(f"PICK (BASE): {pick}")
     tp(f"PLACE (UF110): {place}")
