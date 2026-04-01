@@ -3,7 +3,6 @@
 import time
 import socket
 import requests
-from scipy.spatial.transform import Rotation as R
 
 # ------------------------------------------------------------------
 # CONFIG
@@ -22,9 +21,9 @@ PRE_PLACE_Z = 80.0
 
 PLACE_USER_FRAME = 110
 
-# FIXED TOOL ORIENTATION (downwards)
-# FIX_RX = 90.0
-# FIX_RY = 180.0
+# Fixed robot-safe tool orientation
+FIX_RX = 0.0
+FIX_RY = 180.0
 
 # ------------------------------------------------------------------
 # UTILS
@@ -46,7 +45,7 @@ def parse_pose(resp):
     items = [x for x in resp.split(";") if x]
 
     if len(items) < 20:
-        raise Exception("Invalid vision response")
+        raise Exception(f"Invalid vision response: {resp}")
 
     pick = [float(v) for v in items[3:9]]
     place = [float(v) for v in items[13:19]]
@@ -54,9 +53,35 @@ def parse_pose(resp):
     return pick, place
 
 
-def fix_orientation(p):
-    # keep rz, fix rx/ry
-    return [p[0], p[1], p[2], FIX_RX, FIX_RY, p[5]]
+def normalize_deg(a):
+    while a > 180.0:
+        a -= 360.0
+    while a < -180.0:
+        a += 360.0
+    return a
+
+
+def build_robot_pose(p):
+    """
+    Vision orientation -> robot-safe orientation
+
+    Vision sends:
+      [x, y, z, rx, ry, rz]
+
+    For this job we do NOT use full vision Euler conversion.
+    We keep tool down and only map RZ with the proven formula:
+      RZ_robot = 180 - RZ_vision
+    """
+    rz = normalize_deg(180.0 - p[5])
+
+    return [
+        p[0],
+        p[1],
+        p[2],
+        FIX_RX,
+        FIX_RY,
+        rz,
+    ]
 
 
 def offset_z(p, dz):
@@ -64,89 +89,92 @@ def offset_z(p, dz):
     q[2] += dz
     return q
 
-def zyz_to_xyz(p):
-    try:
-        r = R.from_euler('zyz', [p[3], p[4], p[5]], degrees=True)
-        xyz = r.as_euler('xyz', degrees=True)
-
-        return [p[0], p[1], p[2], xyz[0], xyz[1], xyz[2]]
-    except Exception as e:
-        tp(f"ZYZ->XYZ ERROR: {e}")
-        return p
-
-def normalize_local(p):
-    # sadece basit wrap
-    for i in [3, 4, 5]:
-        while p[i] > 180:
-            p[i] -= 360
-        while p[i] < -180:
-            p[i] += 360
-    return p
 
 # ------------------------------------------------------------------
 # BACKEND CONTROL
 # ------------------------------------------------------------------
 
-def movej(j):
-    requests.post(f"{BACKEND}/api/move/joint", json={
-        "pos": j,
-        "vel": 50,
-        "acc": 80,
-        "sync_type": 0
-    })
+def movej(j, vel=50, acc=80):
+    r = requests.post(
+        f"{BACKEND}/api/move/joint",
+        json={
+            "pos": j,
+            "vel": vel,
+            "acc": acc,
+            "sync_type": 0,
+        },
+        timeout=40,
+    ).json()
+
+    if not r.get("success"):
+        raise Exception(f"MoveJ failed: {r}")
 
 
-def movel(p):
-    r = requests.post(f"{BACKEND}/api/move/tcp", json={
-        "pos": p,
-        "vel": 100,
-        "acc": 200,
-        "ref": 0,
-        "sync_type": 1
-    }).json()
+def movel(p, ref=0, vel=100, acc=200):
+    r = requests.post(
+        f"{BACKEND}/api/move/tcp",
+        json={
+            "pos": p,
+            "vel": vel,
+            "acc": acc,
+            "ref": ref,
+            "sync_type": 1,
+        },
+        timeout=40,
+    ).json()
 
     if not r.get("success"):
         raise Exception(f"MoveL failed: {r}")
 
 
 def set_ref(ref):
-    requests.post(f"{BACKEND}/api/ref", json={"coord": ref})
+    r = requests.post(
+        f"{BACKEND}/api/ref",
+        json={"coord": ref},
+        timeout=10,
+    ).json()
+
+    if not r.get("success"):
+        raise Exception(f"SetRef failed: {r}")
 
 
 def vacuum(on=True):
     if on:
-        # önce OFF → sonra ON (reset/pulse)
-        requests.post(f"{BACKEND}/api/io/digital/out", json={
-            "index": 1,
-            "value": 0
-        })
+        # reset / pulse
+        requests.post(
+            f"{BACKEND}/api/io/digital/out",
+            json={"index": 1, "value": 0},
+            timeout=10,
+        )
         time.sleep(0.2)
 
-        requests.post(f"{BACKEND}/api/io/digital/out", json={
-            "index": 1,
-            "value": 1
-        })
+        requests.post(
+            f"{BACKEND}/api/io/digital/out",
+            json={"index": 1, "value": 1},
+            timeout=10,
+        )
     else:
-        # sadece OFF yeterli
-        requests.post(f"{BACKEND}/api/io/digital/out", json={
-            "index": 1,
-            "value": 0
-        })
+        requests.post(
+            f"{BACKEND}/api/io/digital/out",
+            json={"index": 1, "value": 0},
+            timeout=10,
+        )
 
     time.sleep(0.3)
+
 
 # ------------------------------------------------------------------
 # MAIN JOB
 # ------------------------------------------------------------------
 
 def main():
-
     tp("=== SHEET METALS START ===")
 
     # --------------------------------------------------------------
     # 1. SCAN POSITION
     # --------------------------------------------------------------
     scan_pos = [103.72, -5.01, 107.34, 0.00, 77.69, -76.26]
+    tp("Move scan position")
     movej(scan_pos)
 
     # --------------------------------------------------------------
@@ -154,40 +182,39 @@ def main():
     # --------------------------------------------------------------
     tp("Trigger vision")
     send_tcp(TRIGGER_COMMAND)
-    time.sleep(2)
+    time.sleep(2.0)
 
     # --------------------------------------------------------------
     # 3. GET POSE (RETRY)
     # --------------------------------------------------------------
+    resp = None
     for i in range(10):
         resp = send_tcp(POSE_COMMAND)
         status = resp.split(";")[0]
-
         tp(f"Vision status: {status}")
 
         if status == "+0200.0":
             break
 
-        time.sleep(1)
+        time.sleep(1.0)
     else:
         raise Exception("Vision failed")
 
-    pick, place = parse_pose(resp)
+    pick_raw, place_raw = parse_pose(resp)
 
-    # FIX ORIENTATION HERE
-    # pick = fix_orientation(pick)
-    # place = fix_orientation(place)
-
-    pick = zyz_to_xyz(pick)
-    place = zyz_to_xyz(place)
-    pick = normalize_local(pick)
-    place = normalize_local(place)
-
-    tp(f"PICK (BASE): {pick}")
-    tp(f"PLACE (UF110): {place}")
+    pick = build_robot_pose(pick_raw)
+    place = build_robot_pose(place_raw)
 
     pre_pick = offset_z(pick, PRE_PICK_Z)
     pre_place = offset_z(place, PRE_PLACE_Z)
+
+    tp(f"PICK RAW   (BASE): {pick_raw}")
+    tp(f"PICK FIXED (BASE): {pick}")
+    tp(f"PRE_PICK   (BASE): {pre_pick}")
+
+    tp(f"PLACE RAW  (UF110): {place_raw}")
+    tp(f"PLACE FIX  (UF110): {place}")
+    tp(f"PRE_PLACE  (UF110): {pre_place}")
 
     # --------------------------------------------------------------
     # 4. PICK (BASE FRAME)
@@ -195,20 +222,22 @@ def main():
     set_ref(0)
 
     tp("Move pre-pick")
-    movel(pre_pick)
+    movel(pre_pick, ref=0)
 
     tp("Move pick")
-    movel(pick)
+    movel(pick, ref=0)
 
+    tp("Vacuum ON")
     vacuum(True)
 
-    tp("Retreat")
-    movel(pre_pick)
+    tp("Retreat from pick")
+    movel(pre_pick, ref=0)
 
     # --------------------------------------------------------------
     # 5. TRAVEL (JOINT SAFE)
     # --------------------------------------------------------------
     safe = [53.57, 18.64, 94.99, -1.07, 66.60, -46.67]
+    tp("Move safe joint")
     movej(safe)
 
     # --------------------------------------------------------------
@@ -217,15 +246,16 @@ def main():
     set_ref(PLACE_USER_FRAME)
 
     tp("Move pre-place")
-    movel(pre_place)
+    movel(pre_place, ref=PLACE_USER_FRAME)
 
     tp("Move place")
-    movel(place)
+    movel(place, ref=PLACE_USER_FRAME)
 
+    tp("Vacuum OFF")
     vacuum(False)
 
-    tp("Retreat")
-    movel(pre_place)
+    tp("Retreat from place")
+    movel(pre_place, ref=PLACE_USER_FRAME)
 
     # --------------------------------------------------------------
     # 7. BACK TO BASE

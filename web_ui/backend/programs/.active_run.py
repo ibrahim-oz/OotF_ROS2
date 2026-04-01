@@ -22,13 +22,20 @@ import requests
 
 VISION_IP = "192.168.137.110"
 VISION_PORT = 50005
-
 POSE_COMMAND = "126"
-
 BACKEND = "http://localhost:8000"
 
 PRE_PICK_Z = 80.0
 PRE_PLACE_Z = 80.0
+
+PLACE_USER_FRAME = 101
+
+# USER FRAME 101 (robot içinde BASE'e göre)
+UF101_BASE = [965.0, 631.0, -233.0, 0.0, 0.0, -90.0]
+
+# PLACE target USER FRAME 101 içinde
+PLACE_CART = [0.0, 0.0, 0.0, 0.0, 180.0, 180.0]
+
 
 # ------------------------------------------------------------------
 # UTILS
@@ -48,14 +55,9 @@ def send_tcp(cmd):
 
 def parse_pose(resp):
     items = [x for x in resp.split(";") if x]
-
     if len(items) < 20:
         raise Exception(f"Invalid vision response: {resp}")
-
-    pick = [float(v) for v in items[3:9]]
-    place = [float(v) for v in items[13:19]]
-
-    return pick, place
+    return [float(v) for v in items[3:9]]
 
 
 def normalize_deg(a):
@@ -67,16 +69,8 @@ def normalize_deg(a):
 
 
 def build_robot_pose(p):
-    rz = normalize_deg(180-p[5])
-
-    return [
-        p[0],
-        p[1],
-        p[2],
-        p[3],
-        p[4],
-        rz,
-    ]
+    rz = normalize_deg(180.0 - p[5])
+    return [p[0], p[1], p[2], 0.0, 180.0, rz]
 
 
 def offset_z(p, dz):
@@ -85,50 +79,30 @@ def offset_z(p, dz):
     return q
 
 
+def get_tcp():
+    r = requests.get(f"{BACKEND}/api/tcp", timeout=10).json()
+    if "x" not in r:
+        raise Exception(f"TCP read failed: {r}")
+    return [r["x"], r["y"], r["z"], r["rx"], r["ry"], r["rz"]]
+
+
 # ------------------------------------------------------------------
-# BACKEND CONTROL
+# MOTION
 # ------------------------------------------------------------------
 
 def movej(j):
     r = requests.post(
         f"{BACKEND}/api/move/joint",
-        json={
-            "pos": j,
-            "vel": 50,
-            "acc": 80,
-            "sync_type": 0,
-        },
-        timeout=30,
+        json={"pos": j, "vel": 50, "acc": 80, "sync_type": 0},
+        timeout=60,
     ).json()
 
     if not r.get("success"):
         raise Exception(f"MoveJ failed: {r}")
 
-def wait_motion(timeout=5.0):
-    """
-    Robot gerçekten hareket ediyor mu kontrol et
-    """
-    start = time.time()
 
-    prev = requests.get(f"{BACKEND}/api/tcp").json()
-
-    while time.time() - start < timeout:
-
-        time.sleep(0.2)
-
-        cur = requests.get(f"{BACKEND}/api/tcp").json()
-
-        dx = abs(cur["x"] - prev["x"])
-        dy = abs(cur["y"] - prev["y"])
-        dz = abs(cur["z"] - prev["z"])
-
-        if dx > 1 or dy > 1 or dz > 1:
-            return  # hareket başladı
-
-    tp("⚠️ NO MOTION DETECTED")
-
-
-def movejx(p):
+def movejx(p, ref=0):
+    before = get_tcp()
 
     for sol in [2, 1, 0, 3]:
         r = requests.post(
@@ -137,23 +111,38 @@ def movejx(p):
                 "pos": p,
                 "vel": 30,
                 "acc": 60,
-                "ref": 0,
+                "ref": ref,
                 "sync_type": 0,
                 "sol": sol,
             },
-            timeout=30,
+            timeout=60,
         ).json()
 
         if r.get("success"):
-            tp(f"MoveJX OK (sol={sol})")
-
-            # 🔥 CRITICAL WAIT
-            wait_motion()
-
+            after = get_tcp()
+            tp(f"MoveJX OK (sol={sol}, ref={ref})")
+            tp(f"TCP BEFORE: {before}")
+            tp(f"TCP AFTER : {after}")
             return
 
-    raise Exception(f"MoveJX failed (all solutions): {p}")
+    raise Exception(f"MoveJX failed: {p}")
 
+
+def movel(p, ref=0):
+    r = requests.post(
+        f"{BACKEND}/api/move/tcp",
+        json={
+            "pos": p,
+            "vel": 100,
+            "acc": 200,
+            "ref": ref,
+            "sync_type": 0,
+        },
+        timeout=60,
+    ).json()
+
+    if not r.get("success"):
+        raise Exception(f"MoveL failed: {r}")
 
 def set_ref(ref):
     r = requests.post(
@@ -161,13 +150,12 @@ def set_ref(ref):
         json={"coord": ref},
         timeout=10,
     ).json()
-
     if not r.get("success"):
         raise Exception(f"SetRef failed: {r}")
 
 
 # ------------------------------------------------------------------
-# MAIN TEST
+# MAIN
 # ------------------------------------------------------------------
 
 def main():
@@ -175,58 +163,47 @@ def main():
 
     home = [90, 53.3, 104.4, 0, 22.3, -90]
 
-    tp("Go HOME")
     movej(home)
     time.sleep(2)
 
     for i in range(5):
         tp(f"\n--- ITERATION {i+1} ---")
 
+        # ---------------- PICK ----------------
         set_ref(0)
 
         resp = send_tcp(POSE_COMMAND)
         tp(f"Vision RAW: {resp}")
 
-        pick_raw, place_raw = parse_pose(resp)
-
-        # 🔥 CRITICAL FIX
+        pick_raw = parse_pose(resp)
         pick = build_robot_pose(pick_raw)
-        place = build_robot_pose(place_raw)
-
         pre_pick = offset_z(pick, PRE_PICK_Z)
-        pre_place = offset_z(place, PRE_PLACE_Z)
 
-        tp(f"PICK RAW:  {pick_raw}")
-        tp(f"PICK FIX:  {pick}")
-        tp(f"PRE_PICK:  {pre_pick}")
-
-        tp(f"PLACE RAW: {place_raw}")
-        tp(f"PLACE FIX: {place}")
-        tp(f"PRE_PLACE: {pre_place}")
-
-        tp("Move pre-pick")
         movejx(pre_pick)
-
-        tp("Move pick")
         movejx(pick)
-
         time.sleep(1)
-
-        tp("Retreat")
         movejx(pre_pick)
 
-        tp("Move pre-place")
-        movejx(pre_place)
+        # ---------------- PLACE ----------------
+        set_ref(PLACE_USER_FRAME)
 
-        tp("Move place")
-        movejx(place)
+        place_uf = PLACE_CART
+        pre_place_uf = offset_z(place_uf, PRE_PLACE_Z)
 
-        time.sleep(1)
+        tp(f"UF{PLACE_USER_FRAME} (BASE): {UF101_BASE}")
+        tp(f"PLACE UF: {place_uf}")
 
-        tp("Retreat")
-        movejx(pre_place)
+        # SAFE APPROACH
+        movejx(pre_place_uf, ref=PLACE_USER_FRAME)
 
-        tp("Back HOME")
+        # LINEAR FINAL
+        movel(place_uf, ref=PLACE_USER_FRAME)
+
+        # RETREAT
+        movejx(pre_place_uf, ref=PLACE_USER_FRAME)
+
+        set_ref(0)
+
         movej(home)
         time.sleep(1)
 
@@ -235,3 +212,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

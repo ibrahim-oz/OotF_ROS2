@@ -764,21 +764,23 @@ def api_move_tcp(b: MoveTcpReq):
                 "target": _safe_list(req.pos),
             }
 
-    # For sync mode, verify final target reach
-    if b.sync_type == 0:
+    # For sync mode, verify final target reach ONLY in BASE frame.
+    # If ref != 0, req.pos is not in BASE, so direct comparison is invalid.
+    if b.sync_type == 0 and int(b.ref) == 0:
         try:
             reached, final_pose = _wait_until_tcp_reached(
                 list(req.pos),
                 timeout=25.0,
                 linear_tol_mm=5.0,
                 angular_tol_deg=2.0,
-                check_rotation=False   # 🔥 default use-case
-)
+                check_rotation=False
+            )
         except Exception as e:
             return {
-        "success": False,
-        "error": f"REACH CHECK ERROR: {str(e)}"
-    }
+                "success": False,
+                "error": f"REACH CHECK ERROR: {str(e)}"
+            }
+
         if not reached:
             return {
                 "success": False,
