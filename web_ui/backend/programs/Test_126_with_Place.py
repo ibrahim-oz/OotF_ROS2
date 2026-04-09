@@ -22,10 +22,6 @@ PLACE_USER_FRAME = 101
 # USER FRAME 101 (robot içinde BASE'e göre)
 UF101_BASE = [965.0, 631.0, -233.0, 0.0, 0.0, -90.0]
 
-# PLACE target USER FRAME 101 içinde
-PLACE_CART = [0.0, 0.0, 0.0, 0.0, 180.0, 180.0]
-
-
 # ------------------------------------------------------------------
 # UTILS
 # ------------------------------------------------------------------
@@ -42,11 +38,19 @@ def send_tcp(cmd):
         return s.recv(4096).decode().strip()
 
 
-def parse_pose(resp):
+def parse_adapter_message(resp):
     items = [x for x in resp.split(";") if x]
     if len(items) < 20:
         raise Exception(f"Invalid vision response: {resp}")
-    return [float(v) for v in items[3:9]]
+
+    values = [float(v) for v in items]
+
+    # Adapter response is 2 blocks x 10 values:
+    # [status, ?, ?, x, y, z, rx, ry, rz, ?]
+    pick_raw = values[3:9]
+    place_uf = values[13:19]
+
+    return pick_raw, place_uf
 
 
 def normalize_deg(a):
@@ -164,7 +168,7 @@ def main():
         resp = send_tcp(POSE_COMMAND)
         tp(f"Vision RAW: {resp}")
 
-        pick_raw = parse_pose(resp)
+        pick_raw, place_uf = parse_adapter_message(resp)
         pick = build_robot_pose(pick_raw)
         pre_pick = offset_z(pick, PRE_PICK_Z)
 
@@ -176,10 +180,10 @@ def main():
         # ---------------- PLACE ----------------
         set_ref(PLACE_USER_FRAME)
 
-        place_uf = PLACE_CART
         pre_place_uf = offset_z(place_uf, PRE_PLACE_Z)
 
         tp(f"UF{PLACE_USER_FRAME} (BASE): {UF101_BASE}")
+        tp(f"PICK RAW: {pick_raw}")
         tp(f"PLACE UF: {place_uf}")
 
         # SAFE APPROACH
