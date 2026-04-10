@@ -1,5 +1,24 @@
 import { useEffect, useState } from 'react'
 
+function parseArrayLike(value) {
+    if (Array.isArray(value)) return value
+    if (value == null) return null
+    if (typeof value !== 'string') return null
+
+    const trimmed = value.trim()
+    if (!trimmed) return null
+
+    try {
+        const parsed = JSON.parse(trimmed)
+        return Array.isArray(parsed) ? parsed : null
+    } catch {
+        if (trimmed.includes(',') && !trimmed.includes(' ')) {
+            return trimmed.split(',').map((item) => item.trim()).filter(Boolean)
+        }
+        return null
+    }
+}
+
 export default function VisionDbPanel() {
     const [status, setStatus] = useState(null)
     const [tables, setTables] = useState([])
@@ -85,8 +104,8 @@ export default function VisionDbPanel() {
     }, [selectedTable])
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: '300px minmax(0, 1fr)', gap: 20, minHeight: 620 }}>
-            <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr)', gap: 16, minHeight: 'calc(90vh - 120px)', width: '100%' }}>
+            <div className="card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
                         <div className="card-title" style={{ marginBottom: 4 }}>Vision DB</div>
@@ -113,7 +132,7 @@ export default function VisionDbPanel() {
                     </div>
                 )}
 
-                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto' }}>
+                <div style={{ borderTop: '1px solid var(--border-light)', paddingTop: 12, display: 'flex', flexDirection: 'column', gap: 8, overflowY: 'auto', maxHeight: 'calc(90vh - 220px)' }}>
                     {tables.length === 0 && !loading && (
                         <div style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>
                             No tables found.
@@ -127,7 +146,7 @@ export default function VisionDbPanel() {
                             onClick={() => setSelectedTable(table)}
                             style={{
                                 justifyContent: 'flex-start',
-                                padding: '10px 12px',
+                                padding: '9px 11px',
                                 border: selectedTable === table ? '1px solid var(--accent)' : '1px solid var(--border)',
                                 background: selectedTable === table ? 'rgba(244,70,11,0.08)' : 'var(--bg-card2)',
                             }}
@@ -138,7 +157,7 @@ export default function VisionDbPanel() {
                 </div>
             </div>
 
-            <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div className="card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 12, minHeight: 0 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
                     <div>
                         <div className="card-title" style={{ marginBottom: 4 }}>{selectedTable || 'Table Preview'}</div>
@@ -155,7 +174,7 @@ export default function VisionDbPanel() {
 
                 <div style={{
                     flex: 1,
-                    minHeight: 320,
+                    minHeight: 0,
                     background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))',
                     border: '1px solid var(--border)',
                     borderRadius: 12,
@@ -190,7 +209,7 @@ export default function VisionDbPanel() {
                             </thead>
                             <tbody>
                                 {rows.map((row, idx) => (
-                                    <tr key={idx} style={{ borderBottom: '1px solid var(--border-light)' }}>
+                                    <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
                                         {columns.map((column) => (
                                             <td
                                                 key={`${idx}-${column}`}
@@ -198,10 +217,30 @@ export default function VisionDbPanel() {
                                                     padding: '9px 12px',
                                                     color: 'var(--text-2)',
                                                     verticalAlign: 'top',
-                                                    whiteSpace: 'nowrap',
                                                 }}
                                             >
-                                                {row[column] == null ? '' : String(row[column])}
+                                                {(() => {
+                                                    const value = row[column]
+                                                    const arrayValue = parseArrayLike(value)
+
+                                                    if (arrayValue) {
+                                                        return (
+                                                            <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                                                                {arrayValue.map((item, arrayIdx) => (
+                                                                    <span key={`${idx}-${column}-${arrayIdx}`} style={{ fontFamily: 'monospace', whiteSpace: 'nowrap' }}>
+                                                                        {String(item)}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )
+                                                    }
+
+                                                    return (
+                                                        <span style={{ whiteSpace: 'nowrap' }}>
+                                                            {value == null ? '' : String(value)}
+                                                        </span>
+                                                    )
+                                                })()}
                                             </td>
                                         ))}
                                     </tr>
