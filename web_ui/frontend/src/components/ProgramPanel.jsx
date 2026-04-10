@@ -175,7 +175,7 @@ export default function ProgramPanel({ ros }) {
     }, [])
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr)', gap: 20, alignItems: 'flex-start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 80px)', gap: 20, alignItems: 'flex-start' }}>
 
             {/* ── Library Sidebar ── */}
             <div className="card" style={{ flexShrink: 0, padding: '16px 18px' }}>

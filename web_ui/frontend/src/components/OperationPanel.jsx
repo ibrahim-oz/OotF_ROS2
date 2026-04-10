@@ -352,8 +352,23 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
             <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 0.85fr) minmax(0, 1.15fr)', gap: 20, alignItems: 'stretch' }}>
                 <div className="card" style={{ padding: '16px 18px', minHeight: 320, maxHeight: 320, display: 'flex', flexDirection: 'column' }}>
                     <div className="card-title" style={{ marginBottom: 12 }}>Tasks / Programs</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
-                        {programs.length === 0 && <div style={{ color: 'var(--text-3)', fontSize: '0.9rem' }}>No programs found. Use the Program tab to create one.</div>}
+
+
+                    <div
+                        style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: 6,
+                            flex: 1,
+                            overflowY: 'auto'
+                        }}
+                    >
+                        {programs.length === 0 && (
+                            <div style={{ color: 'var(--text-3)', fontSize: '0.9rem' }}>
+                                No programs found. Use the Program tab to create one.
+                            </div>
+                        )}
+
                         {programs.map(p => (
                             <button
                                 key={p}
@@ -363,7 +378,9 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                                     padding: '10px 12px',
                                     textAlign: 'left',
                                     fontSize: '0.88rem',
-                                    border: selectedProg === p ? '1px solid var(--accent)' : '1px solid var(--border)'
+                                    border: selectedProg === p
+                                        ? '1px solid var(--accent)'
+                                        : '1px solid var(--border)'
                                 }}
                             >
                                 <span style={{ fontWeight: 700 }}>{p}</span>
@@ -380,7 +397,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                                 Clear
                             </button>
                             <button className="btn btn-primary" style={{ padding: '7px 14px', fontSize: '0.88rem' }} onClick={handleSaveLog}>
-                                Save Log
+                                Save
                             </button>
                         </div>
                     </div>
