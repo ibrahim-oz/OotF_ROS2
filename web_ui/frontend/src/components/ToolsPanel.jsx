@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 
 const FIELDS = ['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'];
 const UNITS = ['mm', 'mm', 'mm', '°', '°', '°'];
-const COLORS = ['#ef4444', '#22c55e', '#3b82f6', '#f97316', '#a855f7', '#06b6d4'];
+const COLORS = ['#f4460b', '#2f5667', '#7a9fad', '#c0340a', '#4a7f94', '#94a3b8'];
 
 const DEFAULT_OFFSET = [0, 0, 500, 0, 0, 0]; // X Y Z Rx Ry Rz
 
@@ -10,7 +10,7 @@ function ToolCard({ name, label, isActive, offsets }) {
     return (
         <div className="card" style={{
             border: isActive ? '2px solid var(--accent)' : '1px solid var(--border)',
-            background: isActive ? '#3b82f60d' : 'var(--bg-card)',
+            background: isActive ? 'rgba(244,70,11,0.07)' : 'var(--bg-card)',
         }}>
             {/* Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>

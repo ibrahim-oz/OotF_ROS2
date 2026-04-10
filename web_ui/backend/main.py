@@ -35,6 +35,7 @@ import glob
 import traceback
 import subprocess
 import signal
+import sqlite3
 from typing import Set, Dict, Any, Optional, List
 
 import rclpy
@@ -68,8 +69,9 @@ from dsr_msgs2.srv import (
     GetCurrentTool,
 )
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
@@ -93,6 +95,14 @@ app.mount(
     ),
     name="meshes",
 )
+
+RESULTS_IMAGES_DIR = os.getenv("RESULTS_IMAGES_DIR", "/mnt/affix_images").strip()
+VISION_DB_PATH = os.getenv("VISION_DB_PATH", "").strip()
+VISION_DB_CANDIDATES = [
+    VISION_DB_PATH,
+    "/mnt/affix_db/Buffer.db",
+    "/mnt/affix_db/db/Buffer.db",
+]
 
 clients: Set[WebSocket] = set()
 latest_joint: dict = {}
@@ -1344,6 +1354,146 @@ def api_vision_commands_delete(b: VisionCommandDeleteReq):
     data = [item for item in load_vision_commands() if item["name"] != name]
     save_vision_commands(data)
     return {"success": True, "commands": data}
+
+
+@app.get("/api/results/images")
+def api_results_images():
+    if not os.path.isdir(RESULTS_IMAGES_DIR):
+        return {"success": False, "error": f"Results directory not found: {RESULTS_IMAGES_DIR}", "images": []}
+
+    allowed = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+    items = []
+
+    for name in sorted(os.listdir(RESULTS_IMAGES_DIR), reverse=True):
+        path = os.path.join(RESULTS_IMAGES_DIR, name)
+        ext = os.path.splitext(name)[1].lower()
+        if os.path.isfile(path) and ext in allowed:
+            stat = os.stat(path)
+            items.append({
+                "name": name,
+                "url": f"/api/results/image/{name}",
+                "size": stat.st_size,
+                "mtime": stat.st_mtime,
+            })
+
+    return {"success": True, "images": items, "directory": RESULTS_IMAGES_DIR}
+
+
+@app.get("/api/results/image/{name:path}")
+def api_results_image(name: str):
+    if not os.path.isdir(RESULTS_IMAGES_DIR):
+        raise HTTPException(status_code=404, detail="Results directory not found")
+
+    safe_name = os.path.basename(name)
+    path = os.path.join(RESULTS_IMAGES_DIR, safe_name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return FileResponse(path)
+
+
+def _resolve_vision_db_path() -> Optional[str]:
+    for candidate in VISION_DB_CANDIDATES:
+        if candidate and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _vision_db_connect():
+    db_path = _resolve_vision_db_path()
+    if not db_path:
+        raise FileNotFoundError("Vision DB file not found")
+    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+
+
+@app.get("/api/vision/db/status")
+def api_vision_db_status():
+    db_path = _resolve_vision_db_path()
+    return {
+        "success": bool(db_path),
+        "path": db_path,
+        "candidates": [p for p in VISION_DB_CANDIDATES if p],
+    }
+
+
+@app.get("/api/vision/db/tables")
+def api_vision_db_tables():
+    db_path = _resolve_vision_db_path()
+    if not db_path:
+        return {
+            "success": False,
+            "error": "Vision DB file not found",
+            "path": None,
+            "tables": [],
+        }
+
+    try:
+        with _vision_db_connect() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT name
+                FROM sqlite_master
+                WHERE type='table' AND name NOT LIKE 'sqlite_%'
+                ORDER BY name
+                """
+            ).fetchall()
+            tables = [row["name"] for row in rows]
+        return {"success": True, "path": db_path, "tables": tables}
+    except Exception as e:
+        return {"success": False, "error": str(e), "path": db_path, "tables": []}
+
+
+@app.get("/api/vision/db/table/{table_name}")
+def api_vision_db_table(table_name: str, limit: int = 200):
+    db_path = _resolve_vision_db_path()
+    if not db_path:
+        return {
+            "success": False,
+            "error": "Vision DB file not found",
+            "path": None,
+            "table": table_name,
+            "columns": [],
+            "rows": [],
+        }
+
+    if not table_name.replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Invalid table name")
+
+    safe_limit = max(1, min(limit, 1000))
+
+    try:
+        with _vision_db_connect() as conn:
+            conn.row_factory = sqlite3.Row
+            columns_info = conn.execute(f'PRAGMA table_info("{table_name}")').fetchall()
+            if not columns_info:
+                raise HTTPException(status_code=404, detail="Table not found")
+
+            columns = [row["name"] for row in columns_info]
+            total = conn.execute(f'SELECT COUNT(*) AS count FROM "{table_name}"').fetchone()["count"]
+            data = conn.execute(f'SELECT * FROM "{table_name}" ORDER BY rowid DESC LIMIT {safe_limit}').fetchall()
+            rows = [{col: row[col] for col in columns} for row in data]
+
+        return {
+            "success": True,
+            "path": db_path,
+            "table": table_name,
+            "columns": columns,
+            "rows": rows,
+            "limit": safe_limit,
+            "total": total,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "path": db_path,
+            "table": table_name,
+            "columns": [],
+            "rows": [],
+        }
 
 
 # ─── Startup ─────────────────────────────────────────────────────

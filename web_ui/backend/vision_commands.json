@@ -1,11 +1,11 @@
 [
   {
-    "name": "RequestPose",
-    "command": "124"
+    "name": "Station:SheetMetal",
+    "command": "501:1"
   },
   {
-    "name": "Station:SheetMetal",
-    "command": "500:1"
+    "name": "RequestPose",
+    "command": "124"
   },
   {
     "name": "ClearArea",

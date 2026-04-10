@@ -1,12 +1,12 @@
 /* ── TcpPanel.jsx ── */
 export default function TcpPanel({ tcp }) {
     const fields = [
-        { key: 'x', label: 'X', unit: 'mm', color: '#ef4444' },
-        { key: 'y', label: 'Y', unit: 'mm', color: '#22c55e' },
-        { key: 'z', label: 'Z', unit: 'mm', color: '#3b82f6' },
-        { key: 'rx', label: 'Rx', unit: '°', color: '#f97316' },
-        { key: 'ry', label: 'Ry', unit: '°', color: '#a855f7' },
-        { key: 'rz', label: 'Rz', unit: '°', color: '#06b6d4' },
+        { key: 'x', label: 'X', unit: 'mm', color: '#f4460b' },
+        { key: 'y', label: 'Y', unit: 'mm', color: '#2f5667' },
+        { key: 'z', label: 'Z', unit: 'mm', color: '#7a9fad' },
+        { key: 'rx', label: 'Rx', unit: '°', color: '#c0340a' },
+        { key: 'ry', label: 'Ry', unit: '°', color: '#4a7f94' },
+        { key: 'rz', label: 'Rz', unit: '°', color: '#94a3b8' },
     ]
 
     return (

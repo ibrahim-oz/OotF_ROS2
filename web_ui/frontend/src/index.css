@@ -2,18 +2,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg-base:      #0a0e1a;
-  --bg-card:      #111827;
-  --bg-card2:     #1a2236;
-  --border:       rgba(99,179,237,0.12);
-  --accent:       #3b82f6;
-  --accent-glow:  rgba(59,130,246,0.3);
+  --bg-base:      #000000;
+  --bg-card:      #0d1a20;
+  --bg-card2:     #1a2f3a;
+  --border:       rgba(244,70,11,0.18);
+  --accent:       #f4460b;
+  --accent-glow:  rgba(244,70,11,0.35);
+  --accent2:      #2f5667;
   --success:      #10b981;
   --warning:      #f59e0b;
   --danger:       #ef4444;
   --text-1:       #f1f5f9;
   --text-2:       #94a3b8;
-  --text-3:       #475569;
+  --text-3:       #4a6572;
   --font:         'Inter', system-ui, sans-serif;
   --radius:       14px;
   --radius-sm:    8px;
@@ -55,7 +56,7 @@ html, body, #root {
 .topbar-brand .logo-box {
   width: 36px; height: 36px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  background: linear-gradient(135deg, #f4460b, #2f5667);
   display: flex; align-items: center; justify-content: center;
   font-size: 18px;
 }
@@ -171,7 +172,7 @@ html, body, #root {
 .joint-bar-fill {
   height: 100%;
   border-radius: 2px;
-  background: linear-gradient(90deg, var(--accent), #8b5cf6);
+  background: linear-gradient(90deg, var(--accent), var(--accent2));
   transition: width 0.15s ease;
 }
 
@@ -200,7 +201,7 @@ html, body, #root {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, var(--accent), #6366f1);
+  background: linear-gradient(135deg, var(--accent), #c0340a);
   color: white;
   box-shadow: 0 4px 14px var(--accent-glow);
 }
@@ -221,7 +222,7 @@ html, body, #root {
   color: var(--text-1);
   border: 1px solid var(--border);
 }
-.btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+.btn-secondary:hover { border-color: var(--accent); color: var(--accent); background: rgba(244,70,11,0.08); }
 
 /* ── Info rows ──────────────────────────────────────────────────── */
 .info-row {
@@ -242,7 +243,7 @@ html, body, #root {
 }
 
 .log-entries {
-  background: #060a14;
+  background: #050d0d;
   border-radius: var(--radius-sm);
   padding: 14px;
   height: 140px;
@@ -260,6 +261,7 @@ html, body, #root {
 .log-entry.warning { color: var(--warning); }
 .log-entry.error   { color: var(--danger); }
 .log-entry.info    { color: var(--accent); }
+.log-entry.cmd     { color: #2f5667; }
 
 /* ── Toast ──────────────────────────────────────────────────────── */
 .toast-area {

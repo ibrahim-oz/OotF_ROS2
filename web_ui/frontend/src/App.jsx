@@ -5,6 +5,8 @@ import ProgramPanel from './components/ProgramPanel.jsx'
 import VariablesPanel from './components/VariablesPanel.jsx'
 import ViewerPanel from './components/ViewerPanel.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
+import ResultsPanel from './components/ResultsPanel.jsx'
+import VisionDbPanel from './components/VisionDbPanel.jsx'
 
 // ─── Constants ───────────────────────────────────────────────────
 const JOINT_NAMES = ['J1', 'J2', 'J3', 'J4', 'J5', 'J6']
@@ -51,8 +53,8 @@ function JointCard({ name, deg }) {
 
 function TcpRow({ tcp }) {
     const fields = [
-        { k: 'x', c: '#ef4444' }, { k: 'y', c: '#22c55e' }, { k: 'z', c: '#3b82f6' },
-        { k: 'rx', c: '#f97316' }, { k: 'ry', c: '#a855f7' }, { k: 'rz', c: '#06b6d4' },
+        { k: 'x', c: '#f4460b' }, { k: 'y', c: '#2f5667' }, { k: 'z', c: '#7a9fad' },
+        { k: 'rx', c: '#c0340a' }, { k: 'ry', c: '#4a7f94' }, { k: 'rz', c: '#94a3b8' },
     ]
     return (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 8 }}>
@@ -232,6 +234,8 @@ const TABS = [
     { id: 'variables', label: 'Variables' },
     { id: 'program', label: 'Program' },
     { id: 'vision', label: 'Vision TCP' },
+    { id: 'vision-db', label: 'Vision DB' },
+    { id: 'results', label: 'Results' },
 ]
 
 export default function App() {
@@ -531,8 +535,8 @@ export default function App() {
 
                             parsedUI = (
                                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
-                                    {poseCard('Pick Point', pick, '#22c55e')}
-                                    {poseCard('Place Point', place, '#3b82f6')}
+                                    {poseCard('Pick Point', pick, '#f4460b')}
+                                    {poseCard('Place Point', place, '#2f5667')}
                                 </div>
                             );
                         }
@@ -654,6 +658,8 @@ export default function App() {
                         </div>
                     );
                 })()}
+                {tab === 'vision-db' && <VisionDbPanel />}
+                {tab === 'results' && <ResultsPanel />}
             </div>
         </div>
     )
