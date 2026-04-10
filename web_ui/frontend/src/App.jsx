@@ -545,7 +545,7 @@ export default function App() {
             </div>
 
             {/* Content */}
-            <div style={{ flex: 1, padding: '20px 28px', maxWidth: tab === 'operation' ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
+            <div style={{ flex: 1, padding: '20px 28px', maxWidth: (tab === 'operation' || tab === 'program' || tab === 'all-images' || tab === 'results') ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
 
                 {/* ── CONTROL TAB ── */}
                 {tab === 'control' && (

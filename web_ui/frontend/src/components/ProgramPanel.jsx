@@ -175,15 +175,15 @@ export default function ProgramPanel({ ros }) {
     }, [])
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 80px)', gap: 20, alignItems: 'flex-start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 20, alignItems: 'stretch', width: '100%' }}>
 
             {/* ── Library Sidebar ── */}
-            <div className="card" style={{ flexShrink: 0, padding: '16px 18px' }}>
+            <div className="card" style={{ flexShrink: 0, padding: '16px 18px', display: 'flex', flexDirection: 'column', minHeight: 720 }}>
                 <div className="card-title" style={{ marginBottom: 8 }}>Programs Library</div>
                 <div style={{ color: 'var(--text-3)', fontSize: '0.82rem', marginBottom: 12 }}>
                     Save reusable robot programs and reload them quickly.
                 </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, flex: 1, minHeight: 0 }}>
                     <div style={{ display: 'flex', gap: 8 }}>
                         <input
                             type="text" className="input" placeholder="Program name..."
@@ -195,7 +195,7 @@ export default function ProgramPanel({ ros }) {
 
                     <div style={{ marginTop: 8, borderTop: '1px solid var(--border-light)', paddingTop: 12 }}>
                         {programs.length === 0 && <div style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>No saved programs.</div>}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 520, overflowY: 'auto' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 280px)', overflowY: 'auto', paddingRight: 4 }}>
                             {programs.map(p => (
                                 <div key={p} style={{
                                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -216,11 +216,11 @@ export default function ProgramPanel({ ros }) {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
+            <div style={{ display: 'grid', gridTemplateRows: 'minmax(0, 1fr) 160px', gap: 16, minWidth: 0 }}>
 
                 {/* ── Editor ── */}
-                <div className="card" style={{ padding: '16px 18px' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', minHeight: 720 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
                         <div>
                             <div className="card-title" style={{ marginBottom: 4 }}>Python Program Editor</div>
                             <div style={{ fontSize: '0.8rem', color: 'var(--text-3)' }}>
@@ -235,16 +235,17 @@ export default function ProgramPanel({ ros }) {
                             }}>
                                 {DRL_STATES[drlState] ?? 'Unknown'}
                             </span>
-                            <button className="btn btn-danger" style={{ padding: '7px 16px' }}
+                            <button className="btn btn-danger" style={{ padding: '8px 16px' }}
                                 onClick={handleStop} disabled={!running}>Stop</button>
-                            <button className="btn btn-primary" style={{ padding: '7px 18px' }}
+                            <button className="btn btn-primary" style={{ padding: '8px 18px' }}
                                 onClick={handleRun} disabled={!ros || running}>Run</button>
                         </div>
                     </div>
 
                     <div style={{
                         position: 'relative',
-                        minHeight: 420,
+                        flex: 1,
+                        minHeight: 560,
                         border: '1px solid var(--border)',
                         borderRadius: 10,
                         overflow: 'hidden',
@@ -268,14 +269,15 @@ export default function ProgramPanel({ ros }) {
                             </div>
                         </div>
 
-                        <div style={{ position: 'relative', minHeight: 378 }}>
+                        <div style={{ position: 'relative', minHeight: 0, height: 'calc(100% - 44px)' }}>
                             <pre
                                 ref={highlightRef}
                                 aria-hidden="true"
                                 style={{
                                     margin: 0,
                                     padding: 16,
-                                    minHeight: 378,
+                                    minHeight: '100%',
+                                    height: '100%',
                                     overflow: 'auto',
                                     whiteSpace: 'pre',
                                     fontFamily: "'Courier New', monospace",
@@ -295,7 +297,8 @@ export default function ProgramPanel({ ros }) {
                                     position: 'absolute',
                                     inset: 0,
                                     width: '100%',
-                                    minHeight: 378,
+                                    minHeight: '100%',
+                                    height: '100%',
                                     background: 'transparent',
                                     color: 'transparent',
                                     caretColor: '#f8fafc',
@@ -325,9 +328,9 @@ export default function ProgramPanel({ ros }) {
                 </div>
 
                 {/* ── Log ── */}
-                <div className="card" style={{ padding: '14px 18px' }}>
-                    <div className="card-title">Execution Log</div>
-                    <div className="log-entries" ref={logRef} style={{ height: 120 }}>
+                <div className="card" style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', minHeight: 160 }}>
+                    <div className="card-title" style={{ marginBottom: 10 }}>Execution Log</div>
+                    <div className="log-entries" ref={logRef} style={{ flex: 1, minHeight: 0 }}>
                         {log.length === 0 && <div className="log-entry">Ready. Press ▶ Run to execute.</div>}
                         {log.map((l, i) => (
                             <div key={i} className={`log-entry ${l.type}`}>

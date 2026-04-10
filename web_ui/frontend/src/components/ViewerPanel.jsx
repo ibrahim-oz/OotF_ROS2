@@ -98,6 +98,7 @@ function createJointMarker() {
 
 export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
     const viewerRef = useRef(null)
+    const effectRunIdRef = useRef(0)
     const currentTcpNameRef = useRef(currentTcpName)
     const refreshToolVisualRef = useRef(null)
     const loadToolOffsetsRef = useRef(null)
@@ -120,6 +121,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
     useEffect(() => {
         if (!viewerRef.current) return
 
+        const runId = ++effectRunIdRef.current
         let renderer = null
         let scene = null
         let camera = null
@@ -140,6 +142,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
         const pushDebug = (line) => {
             setDebugLines((prev) => [...prev.slice(-1), line])
         }
+        const isActiveRun = () => !cleanedUp && effectRunIdRef.current === runId
 
         const sameOriginProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
         const sameOriginUrl = `${sameOriginProtocol}//${window.location.host}/rosbridge`
@@ -154,6 +157,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
         }
 
         const refreshToolVisual = () => {
+            if (!isActiveRun()) return
             const link6 = linkNodes.get('link_6')
             if (!link6) return
 
@@ -164,19 +168,16 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             const tcpName = currentTcpNameRef.current
             const offsets = toolOffsetsRef.current?.[tcpName] ?? [0, 0, 120, 0, 0, 0]
             const [xMm = 0, yMm = 0, zMm = 120, rxDeg = 0, ryDeg = 0, rzDeg = 0] = offsets
-            const x = xMm / 1000
-            const y = yMm / 1000
-            const z = zMm / 1000
-            const length = Math.max(Math.min(Math.abs(z), 0.35), 0.04)
+            const rawTcpVector = new THREE.Vector3(xMm / 1000, yMm / 1000, zMm / 1000)
+            const outwardAxis = new THREE.Vector3(0, 0, 1)
+            const tcpVector =
+                rawTcpVector.lengthSq() > 1e-8 && rawTcpVector.dot(outwardAxis) < 0
+                    ? rawTcpVector.clone().negate()
+                    : rawTcpVector
+            const length = Math.max(Math.min(tcpVector.length(), 0.45), 0.04)
 
             const group = new THREE.Group()
             group.name = 'tcp-visual'
-            group.position.set(x, y, z * 0.5)
-            group.rotation.set(
-                THREE.MathUtils.degToRad(rxDeg),
-                THREE.MathUtils.degToRad(ryDeg),
-                THREE.MathUtils.degToRad(rzDeg),
-            )
 
             const shaft = new THREE.Mesh(
                 new THREE.CylinderGeometry(0.028, 0.028, length, 18),
@@ -186,7 +187,11 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                     roughness: 0.45,
                 }),
             )
-            shaft.rotation.x = Math.PI / 2
+            const shaftDirection = tcpVector.lengthSq() > 1e-8
+                ? tcpVector.clone().normalize()
+                : new THREE.Vector3(0, 0, 1)
+            shaft.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), shaftDirection)
+            shaft.position.copy(shaftDirection.clone().multiplyScalar(length * 0.5))
             group.add(shaft)
 
             const tip = new THREE.Mesh(
@@ -197,7 +202,12 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                     roughness: 0.5,
                 }),
             )
-            tip.position.set(0, 0, length * 0.5)
+            tip.position.copy(tcpVector)
+            tip.rotation.set(
+                THREE.MathUtils.degToRad(rxDeg),
+                THREE.MathUtils.degToRad(ryDeg),
+                THREE.MathUtils.degToRad(rzDeg),
+            )
             group.add(tip)
 
             const tcpMarker = new THREE.Mesh(
@@ -208,7 +218,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                     roughness: 0.4,
                 }),
             )
-            tcpMarker.position.set(0, 0, length * 0.5 + 0.03)
+            tcpMarker.position.copy(tcpVector)
             group.add(tcpMarker)
 
             toolVisualGroupRef.current = group
@@ -221,6 +231,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             try {
                 const response = await fetch('/api/tools/offsets', { credentials: 'include' })
                 const data = await response.json()
+                if (!isActiveRun()) return
                 if (!response.ok || !data.success) return
                 toolOffsetsRef.current = data.offsets ?? {}
                 if (data.live?.name && Array.isArray(data.live.offsets)) {
@@ -228,6 +239,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                 }
                 refreshToolVisual()
             } catch {
+                if (!isActiveRun()) return
                 toolOffsetsRef.current = {}
                 refreshToolVisual()
             }
@@ -242,7 +254,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
         }
 
         const initThreeViewer = () => {
-            if (!viewerRef.current || renderer) return
+            if (!viewerRef.current || renderer || !isActiveRun()) return
 
             scene = new THREE.Scene()
             scene.background = new THREE.Color('#060a14')
@@ -319,7 +331,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
         }
 
         const loadVisualIntoLink = async (linkRoot, visual) => {
-            if (!visual?.geometry) return
+            if (!visual?.geometry || !isActiveRun()) return
 
             const visualRoot = new THREE.Group()
             applyRosPose(visualRoot, visual.origin)
@@ -341,6 +353,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                 const meshUrl = `${meshBaseUrl}${resource}`
                 try {
                     const preflight = await fetch(meshUrl, { method: 'GET', credentials: 'include' })
+                    if (!isActiveRun()) return
                     if (!preflight.ok) {
                         pushDebug(`Mesh HTTP ${preflight.status}: ${resource.split('/').slice(-1)[0]}`)
                         ensureFallbackForLink(linkRoot)
@@ -355,6 +368,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                 colladaLoader.load(
                     meshUrl,
                     (collada) => {
+                        if (!isActiveRun()) return
                         const model = collada.scene
                         if (visual.geometry.scale) {
                             model.scale.set(
@@ -375,6 +389,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                     },
                     undefined,
                     (error) => {
+                        if (!isActiveRun()) return
                         const msg =
                             error?.message ||
                             error?.target?.src ||
@@ -391,6 +406,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                         stlLoader.load(
                             stlUrl,
                             (geometry) => {
+                                if (!isActiveRun()) return
                                 geometry.computeVertexNormals()
                                 const stlMesh = new THREE.Mesh(geometry, material)
                                 if (visual.geometry.scale) {
@@ -405,6 +421,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                             },
                             undefined,
                             () => {
+                                if (!isActiveRun()) return
                                 pushDebug(`STL load failed: ${stlUrl}`)
                                 ensureFallbackForLink(linkRoot)
                             },
@@ -439,6 +456,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
         }
 
         const buildRobotFromUrdf = (urdfText) => {
+            if (!isActiveRun()) return
             initThreeViewer()
             jointNodes.clear()
             linkNodes.clear()
@@ -531,13 +549,14 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
         }
 
         const requestRobotDescription = async () => {
+            if (!isActiveRun()) return
             setViewerStatus('Requesting URDF from backend...')
 
             try {
                 const response = await fetch('/api/robot/urdf', { credentials: 'include' })
                 const data = await response.json()
 
-                if (cleanedUp) return
+                if (!isActiveRun()) return
 
                 if (!response.ok || !data.success || typeof data.urdf !== 'string') {
                     pushDebug(`URDF fetch error: ${data.error || response.status}`)
@@ -583,7 +602,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             ros = nextRos
 
             nextRos.on('connection', () => {
-                if (cleanedUp || ros !== nextRos) return
+                if (!isActiveRun() || ros !== nextRos) return
                 setRosbridgeStatus('connected')
                 pushDebug(`Rosbridge connected`)
                 subscribeJointStates()
@@ -592,7 +611,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             })
 
             nextRos.on('error', () => {
-                if (cleanedUp || ros !== nextRos) return
+                if (!isActiveRun() || ros !== nextRos) return
                 pushDebug(`Rosbridge error: ${url}`)
 
                 if (allowFallback && !fallbackTried) {
@@ -608,7 +627,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             })
 
             nextRos.on('close', () => {
-                if (cleanedUp || ros !== nextRos) return
+                if (!isActiveRun() || ros !== nextRos) return
                 pushDebug(`Rosbridge closed`)
 
                 if (allowFallback && !fallbackTried) {

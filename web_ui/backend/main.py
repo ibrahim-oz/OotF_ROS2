@@ -1702,18 +1702,27 @@ def api_all_images_folder(folder_name: str):
     allowed = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
     items = []
 
-    for name in sorted(os.listdir(folder_path), reverse=True):
-        path = os.path.join(folder_path, name)
-        ext = os.path.splitext(name)[1].lower()
-        if os.path.isfile(path) and ext in allowed:
+    for root, _, files in os.walk(folder_path):
+        for name in files:
+            path = os.path.join(root, name)
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in allowed or not os.path.isfile(path):
+                continue
+
+            rel_path = os.path.relpath(path, folder_path).replace(os.sep, "/")
+            rel_dir = os.path.dirname(rel_path).replace(os.sep, "/")
             stat = os.stat(path)
             items.append({
                 "name": name,
+                "relative_path": rel_path,
+                "subfolder": rel_dir if rel_dir and rel_dir != "." else "",
                 "folder": safe_folder,
-                "url": f"/api/all-images/file/{safe_folder}/{name}",
+                "url": f"/api/all-images/file/{safe_folder}/{rel_path}",
                 "size": stat.st_size,
                 "mtime": stat.st_mtime,
             })
+
+    items.sort(key=lambda item: item["mtime"], reverse=True)
 
     return {"success": True, "folder": safe_folder, "images": items, "directory": folder_path}
 
@@ -1724,8 +1733,10 @@ def api_all_images_file(folder_name: str, name: str):
         raise HTTPException(status_code=404, detail="All images directory not found")
 
     safe_folder = os.path.basename(folder_name)
-    safe_name = os.path.basename(name)
-    path = os.path.join(ALL_IMAGES_DIR, safe_folder, safe_name)
+    safe_base = os.path.realpath(os.path.join(ALL_IMAGES_DIR, safe_folder))
+    path = os.path.realpath(os.path.join(safe_base, name))
+    if not path.startswith(safe_base + os.sep) and path != safe_base:
+        raise HTTPException(status_code=400, detail="Invalid image path")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Image not found")
 
