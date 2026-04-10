@@ -5,9 +5,7 @@ export default function VariablesPanel() {
     const [loading, setLoading] = useState(true)
     const [editKey, setEditKey] = useState(null)
     const [editVal, setEditVal] = useState('')
-    const [newKey, setNewKey] = useState('')
-    const [newVal, setNewVal] = useState('')
-    const [collapsed, setCollapsed] = useState({ P: false, J: true, I: false, B: false, S: false })
+    const [collapsed, setCollapsed] = useState({ P: true, J: true, I: true, B: true, S: true })
 
     const toggleCollapse = (p) => {
         setCollapsed(prev => ({ ...prev, [p]: !prev[p] }))
@@ -79,53 +77,85 @@ export default function VariablesPanel() {
     }[p]);
 
     return (
-        <div className="card" style={{ flex: 1, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto' }}>
-            <div className="card-title" style={{ marginBottom: 16 }}>Robot Global Variables (GVAR)</div>
+        <div className="card" style={{ flex: 1, maxHeight: 'calc(100vh - 120px)', overflowY: 'auto', padding: '16px 18px' }}>
+            <div className="card-title" style={{ marginBottom: 8 }}>Robot Global Variables (GVAR)</div>
+            <div style={{ color: 'var(--text-3)', fontSize: '0.82rem', marginBottom: 14 }}>
+                All groups are collapsed by default for a cleaner overview.
+            </div>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
                 {prefixes.map(prefix => {
                     const isLongStr = prefix === 'P' || prefix === 'J' || prefix === 'S';
-                    // Smaller cards for Integers/Booleans, wider for Poses/Strings
-                    const gridCols = isLongStr ? 'repeat(auto-fill, minmax(220px, 1fr))' : 'repeat(auto-fill, minmax(130px, 1fr))';
+                    const gridCols = isLongStr ? 'repeat(auto-fill, minmax(210px, 1fr))' : 'repeat(auto-fill, minmax(150px, 1fr))';
                     return (
-                        <div key={prefix} style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden' }}>
-                            {/* Header (Collapsible) */}
+                        <div key={prefix} style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
                             <div
-                                style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'rgba(255,255,255,0.03)', cursor: 'pointer', borderBottom: collapsed[prefix] ? 'none' : '1px solid var(--border)' }}
+                                style={{
+                                    display: 'flex',
+                                    justifyContent: 'space-between',
+                                    alignItems: 'center',
+                                    padding: '10px 14px',
+                                    background: 'rgba(255,255,255,0.03)',
+                                    cursor: 'pointer',
+                                    borderBottom: collapsed[prefix] ? 'none' : '1px solid var(--border)'
+                                }}
                                 onClick={() => toggleCollapse(prefix)}
                             >
-                                <h3 style={{ margin: 0, fontSize: '0.95rem', fontWeight: 600, color: 'var(--text-1)' }}>
-                                    {getTypeName(prefix)} <span style={{ color: 'var(--text-3)', fontSize: '0.8rem', fontWeight: 400 }}>({grouped[prefix].length})</span>
+                                <h3 style={{ margin: 0, fontSize: '0.88rem', fontWeight: 700, color: 'var(--text-1)' }}>
+                                    {getTypeName(prefix)} <span style={{ color: 'var(--text-3)', fontSize: '0.76rem', fontWeight: 500 }}>({grouped[prefix].length})</span>
                                 </h3>
-                                <div style={{ fontSize: '1.2rem', color: 'var(--text-3)', transform: collapsed[prefix] ? 'rotate(-90deg)' : 'none', transition: 'transform 0.2s' }}>
+                                <div style={{ fontSize: '1rem', color: 'var(--text-3)', transform: collapsed[prefix] ? 'rotate(-90deg)' : 'none', transition: 'transform 0.2s' }}>
                                     ▼
                                 </div>
                             </div>
 
-                            {/* Content Grid */}
                             {!collapsed[prefix] && (
-                                <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: '10px', padding: '16px' }}>
+                                <div style={{ display: 'grid', gridTemplateColumns: gridCols, gap: 8, padding: 12 }}>
                                     {grouped[prefix].map(k => (
                                         <div key={k} style={{
-                                            display: 'flex', flexDirection: 'column', gap: '6px',
-                                            background: 'var(--bg-base)', border: '1px solid var(--border-light)', borderRadius: '6px', padding: '10px'
+                                            display: 'flex',
+                                            flexDirection: 'column',
+                                            gap: 6,
+                                            background: 'var(--bg-base)',
+                                            border: '1px solid var(--border-light)',
+                                            borderRadius: 6,
+                                            padding: '8px 10px',
+                                            minHeight: 72
                                         }}>
                                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                                                <span style={{ color: 'var(--accent)', fontWeight: 600, fontSize: '0.85rem' }}>{k}</span>
+                                                <span style={{ color: 'var(--accent)', fontWeight: 700, fontSize: '0.8rem' }}>{k}</span>
                                                 {editKey === k ? (
                                                     <button className="btn btn-primary" style={{ padding: '2px 8px', fontSize: '0.7rem' }} onClick={() => handleSave(k, editVal)}>Save</button>
                                                 ) : (
-                                                    <button className="btn" style={{ padding: '2px 8px', fontSize: '0.7rem', background: 'var(--bg-elevated)', border: '1px solid var(--border)' }} onClick={() => { setEditKey(k); setEditVal(renderValue(k, vars[k])); }}>Edit</button>
+                                                    <button
+                                                        className="btn"
+                                                        style={{
+                                                            padding: '3px 8px',
+                                                            fontSize: '0.72rem',
+                                                            background: '#ffffff14',
+                                                            color: '#fff',
+                                                            border: '1px solid #ffffff30'
+                                                        }}
+                                                        onClick={() => { setEditKey(k); setEditVal(renderValue(k, vars[k])); }}
+                                                    >
+                                                        Edit
+                                                    </button>
                                                 )}
                                             </div>
 
-                                            <div style={{ marginTop: '2px' }}>
+                                            <div style={{ marginTop: 2 }}>
                                                 {editKey === k ? (
                                                     <input
                                                         type="text"
                                                         style={{
-                                                            width: '100%', padding: '6px', fontSize: '0.8rem',
-                                                            background: 'var(--bg-card)', border: '1px solid var(--accent)', color: 'var(--text-1)', borderRadius: '4px', outline: 'none'
+                                                            width: '100%',
+                                                            padding: '6px 8px',
+                                                            fontSize: '0.78rem',
+                                                            background: 'var(--bg-card)',
+                                                            border: '1px solid var(--accent)',
+                                                            color: 'var(--text-1)',
+                                                            borderRadius: 4,
+                                                            outline: 'none'
                                                         }}
                                                         value={editVal}
                                                         onChange={e => setEditVal(e.target.value)}
@@ -134,8 +164,13 @@ export default function VariablesPanel() {
                                                     />
                                                 ) : (
                                                     <div style={{
-                                                        fontFamily: 'monospace', color: 'var(--text-2)', fontSize: '0.85rem',
-                                                        whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis'
+                                                        fontFamily: 'monospace',
+                                                        color: 'var(--text-2)',
+                                                        fontSize: '0.8rem',
+                                                        lineHeight: 1.35,
+                                                        whiteSpace: 'nowrap',
+                                                        overflow: 'hidden',
+                                                        textOverflow: 'ellipsis'
                                                     }}>
                                                         {renderValue(k, vars[k])}
                                                     </div>

@@ -11,6 +11,7 @@ import requests
 VISION_IP = "192.168.137.110"
 VISION_PORT = 50005
 
+STATION_COMMAND = "501;1"
 TRIGGER_COMMAND = "100;1"
 POSE_COMMAND = "124"
 
@@ -230,98 +231,116 @@ def main():
     tp("=== SHEET METALS START ===")
 
     # --------------------------------------------------------------
-    # 1. SCAN POSITION
+    # 0. STATION SELECTOR
     # --------------------------------------------------------------
+    tp("Selecting the correct station.")
+    send_tcp(STATION_COMMAND)
+    time.sleep(1.0)
+
     scan_pos = [103.72, -5.01, 107.34, 0.00, 77.69, -76.26]
-    tp("Move scan position")
-    movej(scan_pos)
+    safe = [53.57, 18.64, 94.99, -1.07, 66.60, -46.67]
 
-    # --------------------------------------------------------------
-    # 2. VISION TRIGGER
-    # --------------------------------------------------------------
-    tp("Trigger vision")
-    send_tcp(TRIGGER_COMMAND)
-    time.sleep(3.0)
+    cycle = 1
+    while True:
+        tp(f"=== CYCLE {cycle} ===")
 
-    # --------------------------------------------------------------
-    # 3. GET POSE (RETRY)
-    # --------------------------------------------------------------
-    resp = None
-    for i in range(100):
-        resp = send_tcp(POSE_COMMAND)
-        status = resp.split(";")[0]
-        tp(f"Vision status: {status}")
+        # --------------------------------------------------------------
+        # 1. SCAN POSITION
+        # --------------------------------------------------------------
+        tp("Move scan position")
+        movej(scan_pos)
 
-        if status == "+0200.0":
+        # --------------------------------------------------------------
+        # 2. VISION TRIGGER
+        # --------------------------------------------------------------
+        tp("Trigger vision")
+        send_tcp(TRIGGER_COMMAND)
+        time.sleep(3.0)
+
+        # --------------------------------------------------------------
+        # 3. GET POSE (RETRY)
+        # --------------------------------------------------------------
+        resp = None
+        pose_found = False
+
+        for i in range(100):
+            resp = send_tcp(POSE_COMMAND)
+            status = resp.split(";")[0]
+            tp(f"Vision status: {status}")
+
+            if status == "+0200.0":
+                pose_found = True
+                break
+
+            time.sleep(1.0)
+
+        if not pose_found:
+            tp("No pose received in retry step. Finishing job.")
             break
 
-        time.sleep(1.0)
-    else:
-        raise Exception("Vision failed")
+        pick_raw, place_raw = parse_adapter_message(resp)
 
-    pick_raw, place_raw = parse_adapter_message(resp)
+        pick = build_robot_pose(pick_raw)
+        place = build_robot_pose(place_raw)
 
-    pick = build_robot_pose(pick_raw)
-    place = build_robot_pose(place_raw)
+        pre_pick = offset_z(pick, PRE_PICK_Z)
+        pre_place = offset_z(place, PRE_PLACE_Z)
 
-    pre_pick = offset_z(pick, PRE_PICK_Z)
-    pre_place = offset_z(place, PRE_PLACE_Z)
+        tp(f"PICK RAW   (BASE): {pick_raw}")
+        tp(f"PICK FIXED (BASE): {pick}")
+        tp(f"PRE_PICK   (BASE): {pre_pick}")
 
-    tp(f"PICK RAW   (BASE): {pick_raw}")
-    tp(f"PICK FIXED (BASE): {pick}")
-    tp(f"PRE_PICK   (BASE): {pre_pick}")
+        tp(f"PLACE RAW  (UF101): {place_raw}")
+        tp(f"PLACE USE  (UF101): {place}")
+        tp(f"PRE_PLACE  (UF101): {pre_place}")
 
-    tp(f"PLACE RAW  (UF101): {place_raw}")
-    tp(f"PLACE USE  (UF101): {place}")
-    tp(f"PRE_PLACE  (UF101): {pre_place}")
+        # --------------------------------------------------------------
+        # 4. PICK (BASE FRAME)
+        # --------------------------------------------------------------
+        set_ref(0)
 
-    # --------------------------------------------------------------
-    # 4. PICK (BASE FRAME)
-    # --------------------------------------------------------------
-    set_ref(0)
+        tp("Move pre-pick")
+        movel(pre_pick, ref=0)
 
-    tp("Move pre-pick")
-    movel(pre_pick, ref=0)
+        tp("Move pick")
+        movel(pick, ref=0)
 
-    tp("Move pick")
-    movel(pick, ref=0)
+        tp("Vacuum ON")
+        vacuum(True)
 
-    tp("Vacuum ON")
-    vacuum(True)
+        tp("Retreat from pick")
+        movel(pre_pick, ref=0)
 
-    tp("Retreat from pick")
-    movel(pre_pick, ref=0)
+        # --------------------------------------------------------------
+        # 5. TRAVEL (JOINT SAFE)
+        # --------------------------------------------------------------
+        tp("Move safe joint")
+        movej(safe)
 
-    # --------------------------------------------------------------
-    # 5. TRAVEL (JOINT SAFE)
-    # --------------------------------------------------------------
-    safe = [53.57, 18.64, 94.99, -1.07, 66.60, -46.67]
-    tp("Move safe joint")
-    movej(safe)
+        # --------------------------------------------------------------
+        # 6. PLACE (USER FRAME 101)
+        # --------------------------------------------------------------
+        set_ref(PLACE_USER_FRAME)
 
-    # --------------------------------------------------------------
-    # 6. PLACE (USER FRAME 101)
-    # --------------------------------------------------------------
-    set_ref(PLACE_USER_FRAME)
+        tp(f"UF{PLACE_USER_FRAME} (BASE): {UF101_BASE}")
 
-    tp(f"UF{PLACE_USER_FRAME} (BASE): {UF101_BASE}")
+        tp("Move pre-place")
+        movejx(pre_place, ref=PLACE_USER_FRAME)
 
-    tp("Move pre-place")
-    movejx(pre_place, ref=PLACE_USER_FRAME)
+        tp("Move place")
+        movejx(place, ref=PLACE_USER_FRAME)
 
-    tp("Move place")
-    movejx(place, ref=PLACE_USER_FRAME)
+        tp("Vacuum OFF")
+        vacuum(False)
 
-    tp("Vacuum OFF")
-    vacuum(False)
+        tp("Retreat from place")
+        movejx(pre_place, ref=PLACE_USER_FRAME)
 
-    tp("Retreat from place")
-    movejx(pre_place, ref=PLACE_USER_FRAME)
-
-    # --------------------------------------------------------------
-    # 7. BACK TO BASE
-    # --------------------------------------------------------------
-    set_ref(0)
+        # --------------------------------------------------------------
+        # 7. BACK TO BASE
+        # --------------------------------------------------------------
+        set_ref(0)
+        cycle += 1
 
     tp("=== DONE ===")
 

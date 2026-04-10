@@ -10,6 +10,29 @@ const DEFAULT_PROGRAM = [
 ].join('\\n')
 
 const DRL_STATES = { 0: 'Idle', 1: 'Running', 2: 'Paused', 3: 'Error', 4: 'Done' }
+const PY_KEYWORDS = /\b(and|as|assert|async|await|break|class|continue|def|del|elif|else|except|False|finally|for|from|global|if|import|in|is|lambda|None|nonlocal|not|or|pass|raise|return|True|try|while|with|yield)\b/g
+const PY_BUILTINS = /\b(abs|all|any|bool|dict|enumerate|float|int|len|list|max|min|print|range|round|set|str|sum|tuple|zip)\b/g
+const PY_CUSTOMS = /\b(tp_print|movej|movel|movejx|set_do|wait|get_tcp|set_ref|vacuum)\b/g
+
+const escapeHtml = (text) => text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+
+const highlightPython = (source) => {
+    const lines = source.split('\n')
+
+    return lines.map((line, index) => {
+        let html = escapeHtml(line)
+        html = html.replace(/(&quot;.*?&quot;|".*?"|'.*?')/g, '<span style="color:#c4b5fd;">$1</span>')
+        html = html.replace(/(#.*)$/g, '<span style="color:#6b7280;">$1</span>')
+        html = html.replace(/\b(\d+(\.\d+)?)\b/g, '<span style="color:#f59e0b;">$1</span>')
+        html = html.replace(PY_KEYWORDS, '<span style="color:#7dd3fc;">$1</span>')
+        html = html.replace(PY_BUILTINS, '<span style="color:#fda4af;">$1</span>')
+        html = html.replace(PY_CUSTOMS, '<span style="color:#34d399;">$1</span>')
+        return html || '&nbsp;'
+    }).join('\n')
+}
 
 export default function ProgramPanel({ ros }) {
     const [code, setCode] = useState(DEFAULT_PROGRAM)
@@ -20,6 +43,8 @@ export default function ProgramPanel({ ros }) {
     const [progName, setProgName] = useState('')
     const logRef = useRef(null)
     const pollRef = useRef(null)
+    const editorRef = useRef(null)
+    const highlightRef = useRef(null)
 
     const addLog = (msg, type = 'default') =>
         setLog(prev => [...prev.slice(-99), { ts: Date.now(), msg, type }])
@@ -131,16 +156,33 @@ export default function ProgramPanel({ ros }) {
     }, [log])
 
     useEffect(() => {
+        const syncScroll = () => {
+            if (highlightRef.current && editorRef.current) {
+                highlightRef.current.scrollTop = editorRef.current.scrollTop
+                highlightRef.current.scrollLeft = editorRef.current.scrollLeft
+            }
+        }
+
+        const editor = editorRef.current
+        if (!editor) return
+        editor.addEventListener('scroll', syncScroll)
+        return () => editor.removeEventListener('scroll', syncScroll)
+    }, [])
+
+    useEffect(() => {
         fetchPrograms()
         return () => clearInterval(pollRef.current)
     }, [])
 
     return (
-        <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr)', gap: 20, alignItems: 'flex-start' }}>
 
             {/* ── Library Sidebar ── */}
-            <div className="card" style={{ width: 260, flexShrink: 0 }}>
-                <div className="card-title">Programs Library</div>
+            <div className="card" style={{ flexShrink: 0, padding: '16px 18px' }}>
+                <div className="card-title" style={{ marginBottom: 8 }}>Programs Library</div>
+                <div style={{ color: 'var(--text-3)', fontSize: '0.82rem', marginBottom: 12 }}>
+                    Save reusable robot programs and reload them quickly.
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                     <div style={{ display: 'flex', gap: 8 }}>
                         <input
@@ -151,17 +193,25 @@ export default function ProgramPanel({ ros }) {
                         <button className="btn btn-secondary" onClick={handleSave}>Save</button>
                     </div>
 
-                    <div style={{ marginTop: 12, borderTop: '1px solid var(--border-light)', paddingTop: 12 }}>
+                    <div style={{ marginTop: 8, borderTop: '1px solid var(--border-light)', paddingTop: 12 }}>
                         {programs.length === 0 && <div style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>No saved programs.</div>}
-                        {programs.map(p => (
-                            <div key={p} style={{
-                                display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                                padding: '8px 10px', background: 'var(--bg-elevated)', borderRadius: 6, marginBottom: 8
-                            }}>
-                                <span style={{ fontSize: '0.85rem', fontWeight: 500, color: 'var(--text-2)' }}>{p}.py</span>
-                                <button className="btn" style={{ padding: '4px 10px', fontSize: '0.75rem' }} onClick={() => handleLoad(p)}>Load</button>
-                            </div>
-                        ))}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 520, overflowY: 'auto' }}>
+                            {programs.map(p => (
+                                <div key={p} style={{
+                                    display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                    padding: '10px 12px',
+                                    background: 'linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 8
+                                }}>
+                                    <div style={{ minWidth: 0 }}>
+                                        <div style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-1)', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p}.py</div>
+                                        <div style={{ fontSize: '0.73rem', color: 'var(--text-3)' }}>Python robot program</div>
+                                    </div>
+                                    <button className="btn btn-secondary" style={{ padding: '5px 10px', fontSize: '0.74rem' }} onClick={() => handleLoad(p)}>Load</button>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </div>
             </div>
@@ -169,9 +219,14 @@ export default function ProgramPanel({ ros }) {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16, flex: 1 }}>
 
                 {/* ── Editor ── */}
-                <div className="card">
+                <div className="card" style={{ padding: '16px 18px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                        <div className="card-title" style={{ marginBottom: 0 }}>Python Program Editor</div>
+                        <div>
+                            <div className="card-title" style={{ marginBottom: 4 }}>Python Program Editor</div>
+                            <div style={{ fontSize: '0.8rem', color: 'var(--text-3)' }}>
+                                Syntax-colored editor for DRL helpers and Python flow control.
+                            </div>
+                        </div>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                             <span style={{
                                 fontSize: '0.78rem', color: running ? 'var(--success)' : 'var(--text-3)',
@@ -186,22 +241,83 @@ export default function ProgramPanel({ ros }) {
                                 onClick={handleRun} disabled={!ros || running}>Run</button>
                         </div>
                     </div>
-                    <textarea
-                        value={code}
-                        onChange={e => setCode(e.target.value)}
-                        spellCheck={false}
-                        style={{
-                            width: '100%', minHeight: 400, background: '#060a14',
-                            color: '#c8d3f5', fontFamily: "'Courier New', monospace",
-                            fontSize: '0.875rem', lineHeight: 1.7,
-                            border: '1px solid var(--border)', borderRadius: 8,
-                            padding: 16, resize: 'vertical', outline: 'none',
-                        }}
-                    />
-                    <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-3)', display: 'flex', gap: 16 }}>
+
+                    <div style={{
+                        position: 'relative',
+                        minHeight: 420,
+                        border: '1px solid var(--border)',
+                        borderRadius: 10,
+                        overflow: 'hidden',
+                        background: 'linear-gradient(180deg, #08101f 0%, #050914 100%)'
+                    }}>
+                        <div style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'space-between',
+                            padding: '10px 14px',
+                            borderBottom: '1px solid rgba(255,255,255,0.06)',
+                            background: 'rgba(255,255,255,0.03)'
+                        }}>
+                            <div style={{ display: 'flex', gap: 7 }}>
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#fb7185', display: 'inline-block' }}></span>
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#f59e0b', display: 'inline-block' }}></span>
+                                <span style={{ width: 10, height: 10, borderRadius: '50%', background: '#34d399', display: 'inline-block' }}></span>
+                            </div>
+                            <div style={{ fontSize: '0.76rem', color: 'var(--text-3)', fontFamily: 'monospace' }}>
+                                {progName ? `${progName}.py` : 'untitled_program.py'}
+                            </div>
+                        </div>
+
+                        <div style={{ position: 'relative', minHeight: 378 }}>
+                            <pre
+                                ref={highlightRef}
+                                aria-hidden="true"
+                                style={{
+                                    margin: 0,
+                                    padding: 16,
+                                    minHeight: 378,
+                                    overflow: 'auto',
+                                    whiteSpace: 'pre',
+                                    fontFamily: "'Courier New', monospace",
+                                    fontSize: '0.9rem',
+                                    lineHeight: 1.7,
+                                    color: '#c8d3f5',
+                                    pointerEvents: 'none'
+                                }}
+                                dangerouslySetInnerHTML={{ __html: highlightPython(code) }}
+                            />
+                            <textarea
+                                ref={editorRef}
+                                value={code}
+                                onChange={e => setCode(e.target.value)}
+                                spellCheck={false}
+                                style={{
+                                    position: 'absolute',
+                                    inset: 0,
+                                    width: '100%',
+                                    minHeight: 378,
+                                    background: 'transparent',
+                                    color: 'transparent',
+                                    caretColor: '#f8fafc',
+                                    fontFamily: "'Courier New', monospace",
+                                    fontSize: '0.9rem',
+                                    lineHeight: 1.7,
+                                    border: 'none',
+                                    padding: 16,
+                                    resize: 'vertical',
+                                    outline: 'none',
+                                    whiteSpace: 'pre',
+                                    overflow: 'auto'
+                                }}
+                            />
+                        </div>
+                    </div>
+
+                    <div style={{ marginTop: 10, fontSize: '0.75rem', color: 'var(--text-3)', display: 'flex', gap: 12, flexWrap: 'wrap' }}>
                         <span>Python Environment</span>
                         <span><code style={{ color: 'var(--accent)' }}>movej()</code> joint move</span>
                         <span><code style={{ color: 'var(--accent)' }}>movel()</code> linear move</span>
+                        <span><code style={{ color: '#34d399' }}>movejx()</code> jointx move</span>
                         <span><code style={{ color: 'var(--accent)' }}>set_do(idx, val)</code> set dig. out</span>
                         <span><code style={{ color: 'var(--accent)' }}>tp_print()</code> log</span>
                         <span><code style={{ color: 'var(--accent)' }}>wait(sec)</code> sleep</span>
@@ -209,7 +325,7 @@ export default function ProgramPanel({ ros }) {
                 </div>
 
                 {/* ── Log ── */}
-                <div className="card">
+                <div className="card" style={{ padding: '14px 18px' }}>
                     <div className="card-title">Execution Log</div>
                     <div className="log-entries" ref={logRef} style={{ height: 120 }}>
                         {log.length === 0 && <div className="log-entry">Ready. Press ▶ Run to execute.</div>}

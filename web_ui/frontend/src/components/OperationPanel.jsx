@@ -12,7 +12,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
     const [log, setLog] = useState([])
     const logRef = useRef(null)
     const pollRef = useRef(null)
-    const prevLogCountRef = useRef(0)
+    const prevProgramLogIdRef = useRef(0)
 
     const addLog = (msg, type = 'default') =>
         setLog(prev => [...prev.slice(-99), { ts: Date.now(), msg, type }])
@@ -72,14 +72,16 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
         return () => clearInterval(pollRef.current)
     }, [])
 
-    // Merge incoming programLogs from WebSocket into the local log
+    // Merge incoming programLogs from WebSocket into the local log.
+    // Track the last processed id instead of array length, because App caps log history.
     useEffect(() => {
-        if (programLogs && programLogs.length > prevLogCountRef.current) {
-            const newEntries = programLogs.slice(prevLogCountRef.current)
-            // Add to the START of the array for newest-first order
-            setLog(prev => [...newEntries.map(e => ({ ts: e.ts, msg: e.msg, type: 'default' })).reverse(), ...prev.slice(0, 99)])
-            prevLogCountRef.current = programLogs.length
-        }
+        if (!programLogs || programLogs.length === 0) return
+
+        const newEntries = programLogs.filter(e => (e.id ?? 0) > prevProgramLogIdRef.current)
+        if (newEntries.length === 0) return
+
+        setLog(prev => [...prev, ...newEntries.map(e => ({ ts: e.ts, msg: e.msg, type: 'default' }))].slice(-100))
+        prevProgramLogIdRef.current = newEntries[newEntries.length - 1].id ?? prevProgramLogIdRef.current
     }, [programLogs])
 
     useEffect(() => {
@@ -87,6 +89,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
     }, [log])
 
     const startPolling = () => {
+        clearInterval(pollRef.current)
         pollRef.current = setInterval(async () => {
             try {
                 const r = await fetch('/api/program/state')
@@ -167,6 +170,30 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
             if (d.success) { setPaused(false); setDrlState(1); addLog('▶ Resumed.', 'success') }
             else addLog('✘ Resume failed.', 'error')
         } catch { addLog('✘ Resume API error.', 'error') }
+    }
+
+    const handleClearLog = () => {
+        setLog([])
+    }
+
+    const handleSaveLog = () => {
+        if (log.length === 0) return addLog('No log entries to save.', 'warning')
+
+        const txt = log.map((entry) =>
+            `[${new Date(entry.ts).toLocaleTimeString('en-GB', { hour12: false })}] ${entry.msg}`
+        ).join('\n')
+
+        const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+        const blob = new Blob([txt], { type: 'text/plain;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `${selectedProg || 'operation-log'}-${stamp}.txt`
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        URL.revokeObjectURL(url)
+        addLog('Log saved as .txt', 'success')
     }
 
     return (
@@ -324,8 +351,18 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                 </div>
 
                 <div className="card" style={{ flex: 1, maxWidth: 1000, minHeight: 300, maxHeight: 500, display: 'flex', flexDirection: 'column' }}>
-                    <div className="card-title">Operation Log</div>
-                    <div className="log-entries" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-base)', padding: 12, borderRadius: 6, border: '1px solid var(--border)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                        <div className="card-title" style={{ marginBottom: 0 }}>Operation Log</div>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                            <button className="btn btn-secondary" style={{ padding: '7px 14px', fontSize: '0.88rem' }} onClick={handleClearLog}>
+                                Clear
+                            </button>
+                            <button className="btn btn-primary" style={{ padding: '7px 14px', fontSize: '0.88rem' }} onClick={handleSaveLog}>
+                                Save Log
+                            </button>
+                        </div>
+                    </div>
+                    <div ref={logRef} className="log-entries" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-base)', padding: 12, borderRadius: 6, border: '1px solid var(--border)' }}>
                         {log.length === 0 && <div className="log-entry">Waiting for operations...</div>}
                         {log.map((l, i) => (
                             <div key={i} className={`log-entry ${l.type}`}>

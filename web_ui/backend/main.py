@@ -1001,12 +1001,6 @@ def api_io_all():
             if ro_res and ro_res.success:
                 outputs[i - 1] = ro_res.value
 
-        if time.time() - _startup_time < 5.0:
-            outputs[0] = 1
-            outputs[3] = 1
-            outputs[4] = 1
-            outputs[5] = 1
-
     return {"success": True, "inputs": inputs, "outputs": outputs}
 
 
@@ -1278,10 +1272,41 @@ def api_tool_offsets_set(b: ToolOffsetsReq):
 from vision_tcp import VisionTCPClient
 
 vision_client = VisionTCPClient(host="192.168.137.110", port=50005)
+VISION_COMMANDS_FILE = "vision_commands.json"
+
+
+def load_vision_commands():
+    if os.path.exists(VISION_COMMANDS_FILE):
+        try:
+            with open(VISION_COMMANDS_FILE, "r") as f:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return [
+                        {"name": str(item.get("name", "")).strip(), "command": str(item.get("command", "")).strip()}
+                        for item in data
+                        if isinstance(item, dict) and str(item.get("name", "")).strip() and str(item.get("command", "")).strip()
+                    ]
+        except Exception:
+            pass
+    return []
+
+
+def save_vision_commands(data):
+    with open(VISION_COMMANDS_FILE, "w") as f:
+        json.dump(data, f, indent=2)
 
 
 class VisionTriggerReq(BaseModel):
     command: str = "TRIGGER"
+
+
+class VisionCommandReq(BaseModel):
+    name: str
+    command: str
+
+
+class VisionCommandDeleteReq(BaseModel):
+    name: str
 
 
 @app.post("/api/vision/trigger")
@@ -1293,6 +1318,32 @@ async def api_vision_trigger(b: VisionTriggerReq):
         "message": msg,
         "vision_data": vision_client.latest_data,
     }
+
+
+@app.get("/api/vision/commands")
+def api_vision_commands_get():
+    return {"success": True, "commands": load_vision_commands()}
+
+
+@app.post("/api/vision/commands")
+def api_vision_commands_save(b: VisionCommandReq):
+    name = b.name.strip()
+    command = b.command.strip()
+    if not name or not command:
+        return {"success": False, "error": "name and command required"}
+
+    data = [item for item in load_vision_commands() if item["name"] != name]
+    data.insert(0, {"name": name, "command": command})
+    save_vision_commands(data)
+    return {"success": True, "commands": data}
+
+
+@app.post("/api/vision/commands/delete")
+def api_vision_commands_delete(b: VisionCommandDeleteReq):
+    name = b.name.strip()
+    data = [item for item in load_vision_commands() if item["name"] != name]
+    save_vision_commands(data)
+    return {"success": True, "commands": data}
 
 
 # ─── Startup ─────────────────────────────────────────────────────

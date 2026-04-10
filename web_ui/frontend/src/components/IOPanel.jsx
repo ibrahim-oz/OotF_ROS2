@@ -57,8 +57,6 @@ export default function IOPanel({ ros }) {
     const [msg, setMsg] = useState('')
     // Track which DO pins we've set locally (overrides unreliable GET)
     const localOverrides = useRef({})
-    // Hardcode workaround to ensure pins 1, 4, 5, 6 ALWAYS start as OFF (1) in the UI
-    const initialOverridesApplied = useRef(false)
 
     const refresh = useCallback(async (isInitial = false) => {
         if (!isInitial) setLoading(true)
@@ -66,14 +64,6 @@ export default function IOPanel({ ros }) {
             const r = await fetch('/api/io/digital/all').then(r => r.json())
             if (r.success) {
                 setInputs(r.inputs)
-
-                if (!initialOverridesApplied.current) {
-                    localOverrides.current[1] = 1; // DO1 OFF
-                    localOverrides.current[4] = 1; // DO4 OFF
-                    localOverrides.current[5] = 1; // DO5 OFF
-                    localOverrides.current[6] = 1; // DO6 OFF
-                    initialOverridesApplied.current = true;
-                }
 
                 // Apply local overrides on top of GET data
                 const merged = r.outputs.map((serverVal, i) => {

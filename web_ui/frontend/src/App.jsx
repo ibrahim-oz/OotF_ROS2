@@ -4,7 +4,6 @@ import IOPanel from './components/IOPanel.jsx'
 import ProgramPanel from './components/ProgramPanel.jsx'
 import VariablesPanel from './components/VariablesPanel.jsx'
 import ViewerPanel from './components/ViewerPanel.jsx'
-import UserFramesPanel from './components/UserFramesPanel.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
 
 // ─── Constants ───────────────────────────────────────────────────
@@ -231,7 +230,6 @@ const TABS = [
     { id: 'operation', label: 'Operation' },
     { id: 'io', label: 'I/O' },
     { id: 'variables', label: 'Variables' },
-    { id: 'userframes', label: 'User Frames' },
     { id: 'program', label: 'Program' },
     { id: 'vision', label: 'Vision TCP' },
 ]
@@ -248,8 +246,11 @@ export default function App() {
     const [visionData, setVisionData] = useState('')
     const [visionBusy, setVisionBusy] = useState(false)
     const [visionCommand, setVisionCommand] = useState('100;1')
+    const [visionCommandName, setVisionCommandName] = useState('')
+    const [savedVisionCommands, setSavedVisionCommands] = useState([])
 
     const [rosAlive, setRosAlive] = useState(false)
+    const programLogIdRef = useRef(0)
 
     // Global Speed State (shared between Control and Operation tabs)
     const [globalSpeed, setGlobalSpeed] = useState(25)
@@ -265,7 +266,10 @@ export default function App() {
         if (d.type === 'tcp_pose') setTcp(d)
         if (d.type === 'current_tool' || d.type === 'current_t') setCurrentTool(d.name)
         if (d.type === 'connection_status') setRosAlive(d.connected)
-        if (d.type === 'log') setProgramLogs(prev => [...prev.slice(-199), { ts: Date.now(), msg: d.msg, type: 'info' }])
+        if (d.type === 'log') {
+            const nextId = ++programLogIdRef.current
+            setProgramLogs(prev => [...prev.slice(-199), { id: nextId, ts: Date.now(), msg: d.msg, type: 'info' }])
+        }
     }, [])
 
     const ws = useWS(`ws://${location.hostname}:8000/ws`, onMsg)
@@ -277,26 +281,99 @@ export default function App() {
     }, [ws, addLog])
 
     useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [logs])
+    useEffect(() => {
+        const loadVisionCommands = async () => {
+            try {
+                const r = await fetch('/api/vision/commands')
+                const d = await r.json()
+                if (d.success && Array.isArray(d.commands)) {
+                    setSavedVisionCommands(d.commands)
+                }
+            } catch (error) {
+                addLog(`Vision commands could not be loaded: ${error.message || 'request failed'}`, 'warning')
+            }
+        }
+
+        loadVisionCommands()
+    }, [addLog])
 
     const statusLabel = { connected: 'Live', connecting: 'Connecting…', disconnected: 'Offline', error: 'Error' }[ws]
     const fmtTs = ts => ts ? new Date(ts * 1000).toLocaleTimeString('en-GB', { hour12: false }) : '--'
 
     const doHome = async () => { addLog('HOME…', 'info'); const r = await post('/api/home', {}); addLog(r.success ? '✔ Home sent' : '✘ Failed', r.success ? 'success' : 'error') }
     const doStop = async () => { addLog('STOP!', 'warning'); await post('/api/move/stop', {}); addLog('Stop sent.', 'warning') }
-    const doVisionTrigger = async () => {
-        setVisionBusy(true);
-        addLog(`Sending Vision Command: ${visionCommand}...`, 'info');
-        const r = await post('/api/vision/trigger', { command: visionCommand });
-        if (r.success) {
-            addLog(`Vision Trigger Success: ${r.message}`, 'success');
-            if (r.vision_data) {
-                setVisionData(r.vision_data);
-                addLog(`Vision Array Received: ${r.vision_data}`, 'success');
-            }
-        } else {
-            addLog(`Vision Error: ${r.message}`, 'error');
+    const doVisionTrigger = async (commandOverride) => {
+        const commandToSend = typeof commandOverride === 'string'
+            ? commandOverride.trim()
+            : visionCommand.trim()
+
+        if (!commandToSend) {
+            addLog('Enter a vision command first.', 'warning')
+            return
         }
-        setVisionBusy(false);
+
+        setVisionBusy(true)
+        setVisionCommand(commandToSend)
+        addLog(`Sending Vision Command: ${commandToSend}...`, 'info')
+
+        try {
+            const r = await post('/api/vision/trigger', { command: commandToSend })
+            if (r.success) {
+                addLog(`Vision Trigger Success: ${r.message}`, 'success')
+                if (r.vision_data) {
+                    setVisionData(r.vision_data)
+                    addLog(`Vision Array Received: ${r.vision_data}`, 'success')
+                }
+            } else {
+                addLog(`Vision Error: ${r.message}`, 'error')
+            }
+        } catch (error) {
+            addLog(`Vision Error: ${error.message || 'Request failed'}`, 'error')
+        } finally {
+            setVisionBusy(false)
+        }
+    }
+    const saveVisionCommand = async () => {
+        const name = visionCommandName.trim()
+        const command = visionCommand.trim()
+
+        if (!name) {
+            addLog('Enter a name before saving the command.', 'warning')
+            return
+        }
+
+        if (!command) {
+            addLog('Enter a command before saving it.', 'warning')
+            return
+        }
+
+        try {
+            const r = await post('/api/vision/commands', { name, command })
+            if (!r.success) {
+                addLog(`Save failed: ${r.error || 'unknown error'}`, 'error')
+                return
+            }
+
+            setSavedVisionCommands(Array.isArray(r.commands) ? r.commands : [])
+            setVisionCommandName('')
+            addLog(`Saved vision command "${name}".`, 'success')
+        } catch (error) {
+            addLog(`Save failed: ${error.message || 'request failed'}`, 'error')
+        }
+    }
+    const removeVisionCommand = async (name) => {
+        try {
+            const r = await post('/api/vision/commands/delete', { name })
+            if (!r.success) {
+                addLog(`Delete failed: ${r.error || 'unknown error'}`, 'error')
+                return
+            }
+
+            setSavedVisionCommands(Array.isArray(r.commands) ? r.commands : [])
+            addLog(`Removed saved command "${name}".`, 'warning')
+        } catch (error) {
+            addLog(`Delete failed: ${error.message || 'request failed'}`, 'error')
+        }
     }
 
     return (
@@ -413,7 +490,6 @@ export default function App() {
                 {tab === 'operation' && <OperationPanel ros={ros} speed={globalSpeed} setSpeed={setGlobalSpeed} joints={joints} tcp={tcp} currentTool={currentTool} programLogs={programLogs} />}
                 {tab === 'io' && <IOPanel ros={ros} />}
                 {tab === 'variables' && <VariablesPanel />}
-                {tab === 'userframes' && <UserFramesPanel ros={ros} />}
                 {tab === 'program' && <ProgramPanel ros={ros} />}
                 {tab === 'vision' && (() => {
                     let parsedUI = null;
@@ -422,47 +498,60 @@ export default function App() {
                         if (items.length >= 20) {
                             const pick = items.slice(3, 9).map(Number);
                             const place = items.slice(13, 19).map(Number);
+                            const poseCard = (title, values, accent) => (
+                                <div style={{
+                                    background: 'var(--bg-base)',
+                                    border: '1px solid var(--border)',
+                                    borderTop: `3px solid ${accent}`,
+                                    borderRadius: 8,
+                                    padding: 12
+                                }}>
+                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 10, fontWeight: 700, letterSpacing: '0.04em' }}>
+                                        {title}
+                                    </div>
+                                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+                                        {['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'].map((label, index) => (
+                                            <div key={`${title}-${label}`} style={{
+                                                background: 'var(--bg-card2)',
+                                                border: '1px solid var(--border)',
+                                                borderRadius: 6,
+                                                padding: '8px 10px'
+                                            }}>
+                                                <div style={{ color: 'var(--text-3)', fontSize: '0.68rem', textTransform: 'uppercase', marginBottom: 4 }}>
+                                                    {label}
+                                                </div>
+                                                <div style={{ color: 'var(--text-1)', fontSize: '0.92rem', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                                                    {values[index]}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )
+
                             parsedUI = (
-                                <div style={{ display: 'flex', gap: 20, marginTop: 16 }}>
-                                    <div style={{ flex: 1, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Pick Point</div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                                            <div><span style={{color: 'var(--text-3)'}}>X:</span> {pick[0]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Y:</span> {pick[1]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Z:</span> {pick[2]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Rx:</span> {pick[3]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Ry:</span> {pick[4]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Rz:</span> {pick[5]}</div>
-                                        </div>
-                                    </div>
-                                    <div style={{ flex: 1, background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: 12 }}>
-                                        <div style={{ fontSize: '0.8rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Place Point</div>
-                                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
-                                            <div><span style={{color: 'var(--text-3)'}}>X:</span> {place[0]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Y:</span> {place[1]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Z:</span> {place[2]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Rx:</span> {place[3]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Ry:</span> {place[4]}</div>
-                                            <div><span style={{color: 'var(--text-3)'}}>Rz:</span> {place[5]}</div>
-                                        </div>
-                                    </div>
+                                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 12 }}>
+                                    {poseCard('Pick Point', pick, '#22c55e')}
+                                    {poseCard('Place Point', place, '#3b82f6')}
                                 </div>
                             );
                         }
                     }
                     return (
-                        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                        <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '16px 18px' }}>
                             <div className="card-title">Vision TCP Integration (192.168.137.110:50005)</div>
-                            <p style={{ color: 'var(--text-3)', fontSize: '0.85rem' }}>Send a custom command to the vision server and read the incoming string data.</p>
+                            <p style={{ color: 'var(--text-3)', fontSize: '0.82rem', margin: 0 }}>
+                                Send a command, keep common ones as saved buttons, and review the latest response below.
+                            </p>
                             
-                            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(180px, 220px) auto minmax(180px, 240px) auto', gap: 10, alignItems: 'center' }}>
                                 <input 
                                     type="text" 
                                     value={visionCommand} 
                                     onChange={(e) => setVisionCommand(e.target.value)}
                                     placeholder="Enter command (e.g. 100;1)"
                                     style={{
-                                        width: '200px', background: 'var(--bg-base)', border: '1px solid var(--border)',
+                                        width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)',
                                         borderRadius: 6, padding: '9px 12px', color: 'var(--text-1)', fontFamily: 'monospace',
                                         fontSize: '0.95rem', outline: 'none'
                                     }}
@@ -470,14 +559,97 @@ export default function App() {
                                 <button className="btn btn-primary" style={{ padding: '10px 24px', fontSize: '0.95rem' }} onClick={doVisionTrigger} disabled={visionBusy}>
                                     {visionBusy ? '⏳ Waiting for reply...' : '📷 Send Command'}
                                 </button>
+                                <input
+                                    type="text"
+                                    value={visionCommandName}
+                                    onChange={(e) => setVisionCommandName(e.target.value)}
+                                    placeholder="Save as name"
+                                    style={{
+                                        width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)',
+                                        borderRadius: 6, padding: '9px 12px', color: 'var(--text-1)',
+                                        fontSize: '0.95rem', outline: 'none'
+                                    }}
+                                />
+                                <button className="btn btn-secondary" style={{ padding: '10px 18px', fontSize: '0.95rem' }} onClick={saveVisionCommand}>
+                                    Save Command
+                                </button>
                             </div>
 
-                            <div style={{ background: '#0a0f1c', border: '1px solid var(--border)', borderRadius: 8, padding: 16, minHeight: 120 }}>
-                                <div style={{ fontSize: '0.75rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 600 }}>Raw Vision Data Received:</div>
-                                <div style={{ fontFamily: 'monospace', color: 'var(--success)', fontSize: '1.1rem', wordBreak: 'break-all' }}>
+                            <div style={{
+                                background: 'var(--bg-base)',
+                                border: '1px solid var(--border)',
+                                borderRadius: 8,
+                                padding: 12,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                gap: 10
+                            }}>
+                                <div style={{ fontSize: '0.76rem', color: 'var(--text-2)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.04em' }}>
+                                    Saved Commands
+                                </div>
+
+                                {savedVisionCommands.length === 0 ? (
+                                    <div style={{ color: 'var(--text-3)', fontSize: '0.82rem' }}>
+                                        No saved commands yet.
+                                    </div>
+                                ) : (
+                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
+                                        {savedVisionCommands.map((item) => (
+                                            <div key={item.name} style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                gap: 8,
+                                                padding: '7px 10px',
+                                                borderRadius: 9999,
+                                                border: '1px solid var(--border)',
+                                                background: 'var(--bg-card2)'
+                                            }}>
+                                                <button
+                                                    className="btn btn-secondary"
+                                                    style={{ padding: '8px 12px', fontSize: '0.88rem' }}
+                                                    onClick={() => doVisionTrigger(item.command)}
+                                                    title={`Send command: ${item.command}`}
+                                                >
+                                                    {item.name}
+                                                </button>
+                                                <button
+                                                    style={{
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        color: 'var(--accent)',
+                                                        fontSize: '0.85rem',
+                                                        fontFamily: 'monospace',
+                                                        cursor: 'pointer',
+                                                        padding: 0
+                                                    }}
+                                                    onClick={() => setVisionCommand(item.command)}
+                                                    title="Load into input"
+                                                >
+                                                    {item.command}
+                                                </button>
+                                                <button
+                                                    className="btn btn-danger"
+                                                    style={{ padding: '7px 10px', fontSize: '0.8rem' }}
+                                                    onClick={() => removeVisionCommand(item.name)}
+                                                    title={`Delete ${item.name}`}
+                                                >
+                                                    Delete
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {parsedUI}
+
+                            <div style={{ background: '#0a0f1c', border: '1px solid var(--border)', borderRadius: 8, padding: 14, minHeight: 96 }}>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-2)', textTransform: 'uppercase', marginBottom: 8, fontWeight: 700, letterSpacing: '0.04em' }}>
+                                    Raw Vision Data
+                                </div>
+                                <div style={{ fontFamily: 'monospace', color: 'var(--success)', fontSize: '1rem', lineHeight: 1.45, wordBreak: 'break-all' }}>
                                     {visionData || <span style={{ color: 'var(--text-3)' }}>No data yet.</span>}
                                 </div>
-                                {parsedUI}
                             </div>
                         </div>
                     );
