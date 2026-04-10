@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
+import ViewerPanel from './ViewerPanel.jsx'
 
 const DRL_STATES = { 0: 'Idle', 1: 'Running', 2: 'Paused', 3: 'Error', 4: 'Done' }
 
-export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, currentTool, programLogs }) {
+export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, currentTool, currentTcpName, programLogs }) {
     const [programs, setPrograms] = useState([])
     const [toolOffsets, setToolOffsets] = useState({})
     const [selectedProg, setSelectedProg] = useState(null)
@@ -42,8 +43,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
             const r = await fetch('/api/tools/offsets')
             const d = await r.json()
             if (d.success) {
-                const { success, ...offsets } = d
-                setToolOffsets(offsets)
+                setToolOffsets(d.offsets ?? {})
             }
         } catch { }
     }
@@ -196,79 +196,150 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
         addLog('Log saved as .txt', 'success')
     }
 
+    const activeTcpLabel = currentTcpName || currentTool || '—'
+    const activeTcpOffsets = toolOffsets[activeTcpLabel]
+
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 20 }}>
-            {/* Left Column */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                {/* Program Selection */}
-                <div className="card">
-                    <div className="card-title">Select Program</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                        {programs.length === 0 && <div style={{ color: 'var(--text-3)' }}>No programs found. Use "Program" tab to create one.</div>}
-                        {programs.map(p => (
-                            <button
-                                key={p}
-                                className={`btn ${selectedProg === p ? 'btn-primary' : 'btn-secondary'}`}
-                                onClick={() => setSelectedProg(p)}
-                                style={{
-                                    padding: '12px 16px',
-                                    textAlign: 'left',
-                                    fontSize: '0.95rem',
-                                    border: selectedProg === p ? '1px solid var(--accent)' : '1px solid var(--border)'
-                                }}
-                            >
-                                <span style={{ fontWeight: 600 }}>{p}</span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Left Bottom: Speed Control */}
-                <div className="card">
-                    <div className="card-title">Robot Speed Override</div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                        <input
-                            type="range" min="1" max="100" value={speed}
-                            onChange={(e) => setSpeed(parseInt(e.target.value))}
-                            onMouseUp={async (e) => {
-                                if (!ros) return addLog('Not connected to ROS', 'error')
-                                const val = parseInt(e.target.value)
-                                try {
-                                    const r = await fetch('/api/speed', {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({ speed: val })
-                                    })
-                                    const d = await r.json()
-                                    if (d.success) addLog(`Speed set to ${val}%`, 'info')
-                                    else addLog('Failed to set speed', 'error')
-                                } catch { addLog('Speed request failed', 'error') }
-                            }}
-                            style={{ flex: 1 }}
-                        />
-                        <span id="op-speed-label" style={{ fontWeight: 600, minWidth: 40, textAlign: 'right' }}>{speed}%</span>
-                    </div>
-                </div>
-
-                {/* Left Bottom: Active TCP Offset */}
-                <div className="card" style={{ flex: 1 }}>
-                    <div className="card-title" style={{ marginBottom: 12 }}>Active TCP Offset</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, justifyContent: 'center', height: '100%' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 20, width: '100%' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.8fr) minmax(320px, 0.95fr)', gap: 20, alignItems: 'stretch' }}>
+                <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 18px 0 18px', gap: 12 }}>
+                        <div className="card-title" style={{ marginBottom: 12 }}>3D Robot Viewer</div>
                         <div style={{
-                            fontSize: '1.1rem', fontWeight: 800, color: 'var(--accent)',
-                            background: 'var(--bg-base)', padding: '10px 20px', borderRadius: 8,
-                            border: '1px solid var(--border)', textAlign: 'center'
+                            fontSize: '0.74rem',
+                            color: 'var(--text-2)',
+                            background: 'var(--bg-base)',
+                            border: '1px solid var(--border)',
+                            borderRadius: 999,
+                            padding: '5px 10px',
+                            marginBottom: 12,
                         }}>
-                            {currentTool || '—'}
+                            Active TCP: <span style={{ color: 'var(--accent)', fontWeight: 700 }}>{activeTcpLabel}</span>
+                        </div>
+                    </div>
+                    <ViewerPanel currentTcpName={currentTcpName} />
+                </div>
+
+                <div style={{ display: 'grid', gap: 14, height: '100%', gridTemplateRows: 'auto auto 1fr auto' }}>
+                    <div className="card">
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                            <div className="card-title" style={{ marginBottom: 0 }}>
+                                {selectedProg ? `Operation: ${selectedProg}` : 'Operation'}
+                            </div>
+                            <span style={{
+                                fontSize: '0.76rem',
+                                color: running ? (paused ? 'var(--warning)' : 'var(--success)') : 'var(--text-3)',
+                                background: 'var(--bg-base)',
+                                padding: '4px 10px',
+                                borderRadius: 100,
+                                border: '1px solid var(--border)',
+                                fontWeight: 700
+                            }}>
+                                {DRL_STATES[drlState] ?? 'Unknown'}
+                            </span>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                            <button className="btn btn-danger" style={{ padding: '8px 16px', fontSize: '0.9rem' }}
+                                onClick={handleStop} disabled={!running}>Stop</button>
+
+                            {paused ? (
+                                <button className="btn btn-warning" style={{ padding: '8px 16px', fontSize: '0.9rem', color: '#000' }}
+                                    onClick={handleResume} disabled={!ros}>Resume</button>
+                            ) : (
+                                <button className="btn btn-secondary" style={{ padding: '8px 16px', fontSize: '0.9rem' }}
+                                    onClick={handlePause} disabled={!running}>Pause</button>
+                            )}
+
+                            <button className="btn btn-primary" style={{ gridColumn: '1 / -1', padding: '9px 16px', fontSize: '0.92rem' }}
+                                onClick={handleRun} disabled={!ros || (running && !paused) || !selectedProg}>
+                                {running ? 'Restart Program' : 'Run Program'}
+                            </button>
+                        </div>
+                        <div style={{ fontSize: '0.83rem', color: selectedProg ? 'var(--text-2)' : 'var(--text-3)', background: 'var(--bg-base)', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border-light)', marginTop: 12 }}>
+                            {selectedProg
+                                ? <><strong style={{ color: 'var(--accent)' }}>Program selected.</strong> Press Run to execute on the robot.</>
+                                : 'Select a program below to execute it on the robot.'}
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <div className="card-title">Robot Speed Override</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <input
+                                type="range" min="1" max="100" value={speed}
+                                onChange={(e) => setSpeed(parseInt(e.target.value))}
+                                onMouseUp={async (e) => {
+                                    if (!ros) return addLog('Not connected to ROS', 'error')
+                                    const val = parseInt(e.target.value)
+                                    try {
+                                        const r = await fetch('/api/speed', {
+                                            method: 'POST',
+                                            headers: { 'Content-Type': 'application/json' },
+                                            body: JSON.stringify({ speed: val })
+                                        })
+                                        const d = await r.json()
+                                        if (d.success) addLog(`Speed set to ${val}%`, 'info')
+                                        else addLog('Failed to set speed', 'error')
+                                    } catch { addLog('Speed request failed', 'error') }
+                                }}
+                                style={{ flex: 1 }}
+                            />
+                            <span id="op-speed-label" style={{ fontWeight: 700, minWidth: 44, textAlign: 'right' }}>{speed}%</span>
+                        </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, alignItems: 'stretch' }}>
+                        <div className="card" style={{ padding: '14px 16px', height: '100%' }}>
+                            <div className="card-title" style={{ marginBottom: 10 }}>Live TCP</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 10px' }}>
+                                {['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'].map((k) => (
+                                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: 3, fontSize: '0.82rem' }}>
+                                        <span style={{ color: 'var(--text-2)' }}>{k}</span>
+                                        <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                                            {tcp && tcp[k.toLowerCase()] !== undefined ? tcp[k.toLowerCase()].toFixed(1) : '—'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
                         </div>
 
-                        {currentTool && toolOffsets[currentTool] && (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px 12px', background: 'var(--bg-card2)', padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border)' }}>
+                        <div className="card" style={{ padding: '14px 16px', height: '100%' }}>
+                            <div className="card-title" style={{ marginBottom: 10 }}>Live Joints</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '6px 10px' }}>
+                                {['J1', 'J2', 'J3', 'J4', 'J5', 'J6'].map((k, i) => (
+                                    <div key={k} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: 3, fontSize: '0.82rem' }}>
+                                        <span style={{ color: 'var(--text-2)' }}>{k}</span>
+                                        <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                                            {joints && joints[i] !== undefined ? joints[i].toFixed(1) : '—'}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="card" style={{ padding: '14px 16px' }}>
+                        <div className="card-title" style={{ marginBottom: 10 }}>Active TCP Offset</div>
+                        <div style={{
+                            fontSize: '0.98rem',
+                            fontWeight: 800,
+                            color: 'var(--accent)',
+                            background: 'var(--bg-base)',
+                            padding: '9px 12px',
+                            borderRadius: 8,
+                            border: '1px solid var(--border)',
+                            textAlign: 'center',
+                            marginBottom: 10
+                        }}>
+                            {activeTcpLabel}
+                        </div>
+                        {activeTcpOffsets && (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '6px 10px', background: 'var(--bg-card2)', padding: '8px 10px', borderRadius: 8, border: '1px solid var(--border)' }}>
                                 {['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'].map((axis, i) => (
-                                    <div key={axis} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem' }}>
-                                        <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>{axis}:</span>
-                                        <span style={{ fontWeight: 600, fontVariantNumeric: 'tabular-nums', color: 'var(--text-1)' }}>
-                                            {toolOffsets[currentTool][i]}
+                                    <div key={axis} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.79rem' }}>
+                                        <span style={{ color: 'var(--text-3)', fontWeight: 600 }}>{axis}</span>
+                                        <span style={{ fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: 'var(--text-1)' }}>
+                                            {activeTcpOffsets[i]}
                                         </span>
                                     </div>
                                 ))}
@@ -278,80 +349,31 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                 </div>
             </div>
 
-            {/* Right: Execution Info & Log */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                <div className="card">
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                        <div className="card-title" style={{ marginBottom: 0 }}>
-                            {selectedProg ? `Operation: ${selectedProg}` : 'Operation'}
-                        </div>
-                        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                            <span style={{
-                                fontSize: '0.8rem', color: running ? (paused ? 'var(--warning)' : 'var(--success)') : 'var(--text-3)',
-                                background: 'var(--bg-base)', padding: '4px 12px', borderRadius: 100,
-                                border: '1px solid var(--border)', fontWeight: 600
-                            }}>
-                                {DRL_STATES[drlState] ?? 'Unknown'}
-                            </span>
-                            <button className="btn btn-danger" style={{ padding: '8px 20px', fontSize: '0.95rem' }}
-                                onClick={handleStop} disabled={!running}>Stop</button>
-
-                            {paused ? (
-                                <button className="btn btn-warning" style={{ padding: '8px 24px', fontSize: '0.95rem', color: '#000' }}
-                                    onClick={handleResume} disabled={!ros}>Resume</button>
-                            ) : (
-                                <button className="btn btn-secondary" style={{ padding: '8px 20px', fontSize: '0.95rem' }}
-                                    onClick={handlePause} disabled={!running}>Pause</button>
-                            )}
-
-                            <button className="btn btn-primary" style={{ padding: '8px 24px', fontSize: '0.95rem' }}
-                                onClick={handleRun} disabled={!ros || (running && !paused) || !selectedProg}>
-                                {running ? 'Restart' : 'Run'}
+            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(300px, 0.85fr) minmax(0, 1.15fr)', gap: 20, alignItems: 'stretch' }}>
+                <div className="card" style={{ padding: '16px 18px', minHeight: 320, maxHeight: 320, display: 'flex', flexDirection: 'column' }}>
+                    <div className="card-title" style={{ marginBottom: 12 }}>Tasks / Programs</div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flex: 1, overflowY: 'auto' }}>
+                        {programs.length === 0 && <div style={{ color: 'var(--text-3)', fontSize: '0.9rem' }}>No programs found. Use the Program tab to create one.</div>}
+                        {programs.map(p => (
+                            <button
+                                key={p}
+                                className={`btn ${selectedProg === p ? 'btn-primary' : 'btn-secondary'}`}
+                                onClick={() => setSelectedProg(p)}
+                                style={{
+                                    padding: '10px 12px',
+                                    textAlign: 'left',
+                                    fontSize: '0.88rem',
+                                    border: selectedProg === p ? '1px solid var(--accent)' : '1px solid var(--border)'
+                                }}
+                            >
+                                <span style={{ fontWeight: 700 }}>{p}</span>
                             </button>
-                        </div>
-                    </div>
-                    {selectedProg ? (
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-2)', background: 'var(--bg-base)', padding: '10px 14px', borderRadius: 6, border: '1px solid var(--border-light)' }}>
-                            <strong style={{ color: 'var(--accent)' }}>Program Selected.</strong> Press Run to execute on the robot.
-                        </div>
-                    ) : (
-                        <div style={{ fontSize: '0.85rem', color: 'var(--text-3)' }}>
-                            Please select a daily program from the list to execute.
-                        </div>
-                    )}
-                </div>
-
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                    <div className="card" style={{ padding: '12px 16px' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', fontWeight: 600 }}>Live TCP (mm, °)</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '6px 12px' }}>
-                            {['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'].map((k, i) => (
-                                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: 2 }}>
-                                    <span style={{ color: 'var(--text-2)', fontSize: '0.8rem' }}>{k}</span>
-                                    <span style={{ fontWeight: 600, fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>
-                                        {tcp && tcp[k.toLowerCase()] !== undefined ? tcp[k.toLowerCase()].toFixed(1) : '—'}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                    <div className="card" style={{ padding: '12px 16px' }}>
-                        <div style={{ fontSize: '0.75rem', color: 'var(--text-3)', marginBottom: 8, textTransform: 'uppercase', fontWeight: 600 }}>Live Joints (°)</div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '6px 12px' }}>
-                            {['J1', 'J2', 'J3', 'J4', 'J5', 'J6'].map((k, i) => (
-                                <div key={k} style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border-light)', paddingBottom: 2 }}>
-                                    <span style={{ color: 'var(--text-2)', fontSize: '0.8rem' }}>{k}</span>
-                                    <span style={{ fontWeight: 600, fontSize: '0.85rem', fontVariantNumeric: 'tabular-nums' }}>
-                                        {joints && joints[i] !== undefined ? joints[i].toFixed(1) : '—'}
-                                    </span>
-                                </div>
-                            ))}
-                        </div>
+                        ))}
                     </div>
                 </div>
 
-                <div className="card" style={{ flex: 1, maxWidth: 1000, minHeight: 300, maxHeight: 500, display: 'flex', flexDirection: 'column' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+                <div className="card" style={{ minHeight: 320, maxHeight: 320, display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                         <div className="card-title" style={{ marginBottom: 0 }}>Operation Log</div>
                         <div style={{ display: 'flex', gap: 8 }}>
                             <button className="btn btn-secondary" style={{ padding: '7px 14px', fontSize: '0.88rem' }} onClick={handleClearLog}>

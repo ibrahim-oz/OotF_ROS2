@@ -12,53 +12,90 @@ function formatBytes(bytes) {
     return `${value.toFixed(value >= 10 || idx === 0 ? 0 : 1)} ${units[idx]}`
 }
 
-export default function ResultsPanel() {
+export default function AllImagesPanel() {
+    const [folders, setFolders] = useState([])
+    const [selectedFolder, setSelectedFolder] = useState('')
     const [images, setImages] = useState([])
     const [selected, setSelected] = useState(null)
-    const [zoom, setZoom] = useState(500)
-    const [loading, setLoading] = useState(true)
+    const [zoom, setZoom] = useState(100)
+    const [loadingFolders, setLoadingFolders] = useState(true)
+    const [loadingImages, setLoadingImages] = useState(false)
     const [error, setError] = useState('')
+    const [directory, setDirectory] = useState('')
     const [naturalSize, setNaturalSize] = useState(null)
 
-    useEffect(() => { setNaturalSize(null) }, [selected?.name])
+    useEffect(() => { setNaturalSize(null) }, [selected?.name, selectedFolder])
 
-    const loadImages = async () => {
-        setLoading(true)
+    const loadFolders = async () => {
+        setLoadingFolders(true)
         setError('')
         try {
-            const r = await fetch('/api/results/images')
+            const r = await fetch('/api/all-images/folders')
             const d = await r.json()
             if (!d.success) {
-                setError(d.error || 'Failed to load results')
+                setError(d.error || 'Failed to load folders')
+                setFolders([])
+                setSelectedFolder('')
                 setImages([])
                 setSelected(null)
                 return
             }
 
-            const normalized = (d.images || []).map(item => ({
-                ...item,
-                url: item.url || `/api/results/image/${encodeURIComponent(item.name)}`,
-            }))
-
-            setImages(normalized)
-            setSelected(prev => {
-                if (prev && normalized.some(item => item.name === prev.name)) {
-                    return normalized.find(item => item.name === prev.name)
-                }
-                return normalized[0] || null
+            setDirectory(d.directory || '')
+            setFolders(d.folders || [])
+            setSelectedFolder((prev) => {
+                if (prev && (d.folders || []).includes(prev)) return prev
+                return d.folders?.[0] || ''
             })
         } catch (err) {
-            setError(err.message || 'Failed to load results')
+            setError(err.message || 'Failed to load folders')
+        } finally {
+            setLoadingFolders(false)
+        }
+    }
+
+    const loadFolderImages = async (folderName) => {
+        if (!folderName) {
+            setImages([])
+            setSelected(null)
+            return
+        }
+
+        setLoadingImages(true)
+        setError('')
+        try {
+            const r = await fetch(`/api/all-images/folder/${encodeURIComponent(folderName)}`)
+            const d = await r.json()
+            if (!d.success) {
+                setError(d.error || 'Failed to load images')
+                setImages([])
+                setSelected(null)
+                return
+            }
+
+            setImages(d.images || [])
+            setSelected((prev) => {
+                if (prev && (d.images || []).some((item) => item.name === prev.name && item.folder === prev.folder)) {
+                    return d.images.find((item) => item.name === prev.name && item.folder === prev.folder)
+                }
+                return d.images?.[0] || null
+            })
+        } catch (err) {
+            setError(err.message || 'Failed to load images')
             setImages([])
             setSelected(null)
         } finally {
-            setLoading(false)
+            setLoadingImages(false)
         }
     }
 
     useEffect(() => {
-        loadImages()
+        loadFolders()
     }, [])
+
+    useEffect(() => {
+        loadFolderImages(selectedFolder)
+    }, [selectedFolder])
 
     const selectedInfo = useMemo(() => {
         if (!selected) return null
@@ -70,18 +107,22 @@ export default function ResultsPanel() {
     }, [selected])
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 20, minHeight: 620 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '280px 340px minmax(0, 1fr)', gap: 20, minHeight: 620 }}>
             <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div>
-                        <div className="card-title" style={{ marginBottom: 4 }}>Results</div>
+                        <div className="card-title" style={{ marginBottom: 4 }}>All Images</div>
                         <div style={{ fontSize: '0.82rem', color: 'var(--text-3)' }}>
-                            Images from the mounted Windows share.
+                            Browse mounted image folders.
                         </div>
                     </div>
-                    <button className="btn btn-secondary" style={{ padding: '7px 14px', fontSize: '0.84rem' }} onClick={loadImages} disabled={loading}>
-                        {loading ? '⏳' : 'Refresh'}
+                    <button className="btn btn-secondary" style={{ padding: '7px 14px', fontSize: '0.84rem' }} onClick={loadFolders} disabled={loadingFolders}>
+                        {loadingFolders ? '⏳' : 'Refresh'}
                     </button>
+                </div>
+
+                <div style={{ fontSize: '0.76rem', color: 'var(--text-3)', wordBreak: 'break-all' }}>
+                    {directory || '/mnt/affix_all_images'}
                 </div>
 
                 {error && (
@@ -90,16 +131,51 @@ export default function ResultsPanel() {
                     </div>
                 )}
 
-                {!loading && images.length === 0 && !error && (
+                {!loadingFolders && folders.length === 0 && !error && (
                     <div style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>
-                        No image files found in the results directory.
+                        No folders found.
+                    </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', paddingRight: 4 }}>
+                    {folders.map((folder) => (
+                        <button
+                            key={folder}
+                            onClick={() => setSelectedFolder(folder)}
+                            style={{
+                                textAlign: 'left',
+                                padding: '10px 12px',
+                                borderRadius: 10,
+                                border: selectedFolder === folder ? '1px solid var(--accent)' : '1px solid var(--border)',
+                                background: selectedFolder === folder ? 'rgba(244,70,11,0.08)' : 'var(--bg-card2)',
+                                cursor: 'pointer',
+                                color: 'inherit'
+                            }}
+                        >
+                            {folder}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+                <div>
+                    <div className="card-title" style={{ marginBottom: 4 }}>{selectedFolder || 'Folder'}</div>
+                    <div style={{ fontSize: '0.82rem', color: 'var(--text-3)' }}>
+                        {selectedFolder ? `${images.length} images` : 'Select a folder.'}
+                    </div>
+                </div>
+
+                {!loadingImages && images.length === 0 && selectedFolder && !error && (
+                    <div style={{ color: 'var(--text-3)', fontSize: '0.84rem' }}>
+                        No images in this folder.
                     </div>
                 )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10, overflowY: 'auto', paddingRight: 4 }}>
                     {images.map((item) => (
                         <button
-                            key={item.name}
+                            key={`${item.folder}-${item.name}`}
                             onClick={() => setSelected(item)}
                             style={{
                                 display: 'grid',
@@ -109,8 +185,8 @@ export default function ResultsPanel() {
                                 textAlign: 'left',
                                 padding: 10,
                                 borderRadius: 10,
-                                border: selected?.name === item.name ? '1px solid var(--accent)' : '1px solid var(--border)',
-                                background: selected?.name === item.name ? 'rgba(244,70,11,0.08)' : 'var(--bg-card2)',
+                                border: selected?.name === item.name && selected?.folder === item.folder ? '1px solid var(--accent)' : '1px solid var(--border)',
+                                background: selected?.name === item.name && selected?.folder === item.folder ? 'rgba(244,70,11,0.08)' : 'var(--bg-card2)',
                                 cursor: 'pointer',
                                 color: 'inherit'
                             }}
@@ -138,7 +214,7 @@ export default function ResultsPanel() {
                     <div>
                         <div className="card-title" style={{ marginBottom: 4 }}>{selectedInfo ? selectedInfo.name : 'Preview'}</div>
                         <div style={{ fontSize: '0.82rem', color: 'var(--text-3)' }}>
-                            {selectedInfo ? `${selectedInfo.sizeText} · ${selectedInfo.modified}` : 'Select an image to inspect it.'}
+                            {selectedInfo ? `${selectedInfo.folder} · ${selectedInfo.sizeText} · ${selectedInfo.modified}` : 'Select an image to inspect it.'}
                         </div>
                     </div>
 

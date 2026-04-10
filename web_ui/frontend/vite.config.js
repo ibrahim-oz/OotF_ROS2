@@ -8,7 +8,12 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': 'http://localhost:8000',
+      '/dsr_description2': 'http://localhost:8000',
       '/ws': {
+        target: 'ws://localhost:8000',
+        ws: true,
+      },
+      '/rosbridge': {
         target: 'ws://localhost:8000',
         ws: true,
       },

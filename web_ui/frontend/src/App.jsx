@@ -7,6 +7,7 @@ import ViewerPanel from './components/ViewerPanel.jsx'
 import OperationPanel from './components/OperationPanel.jsx'
 import ResultsPanel from './components/ResultsPanel.jsx'
 import VisionDbPanel from './components/VisionDbPanel.jsx'
+import AllImagesPanel from './components/AllImagesPanel.jsx'
 
 // ─── Constants ───────────────────────────────────────────────────
 const JOINT_NAMES = ['J1', 'J2', 'J3', 'J4', 'J5', 'J6']
@@ -22,10 +23,11 @@ const post = (url, body) => fetch(url, {
     body: JSON.stringify(body)
 }).then(r => r.json())
 
-function useWS(url, onMsg) {
+function useWS(url, onMsg, enabled = true) {
     const ref = useRef(null)
     const [st, setSt] = useState('disconnected')
     const connect = useCallback(() => {
+        if (!enabled) return
         setSt('connecting')
         const ws = new WebSocket(url)
         ref.current = ws
@@ -33,9 +35,69 @@ function useWS(url, onMsg) {
         ws.onmessage = e => { try { onMsg(JSON.parse(e.data)) } catch { } }
         ws.onclose = () => { setSt('disconnected'); setTimeout(connect, 3000) }
         ws.onerror = () => setSt('error')
-    }, [url, onMsg])
-    useEffect(() => { connect(); return () => ref.current?.close() }, [connect])
+    }, [url, onMsg, enabled])
+    useEffect(() => {
+        if (!enabled) {
+            setSt('disconnected')
+            ref.current?.close()
+            return
+        }
+        connect()
+        return () => ref.current?.close()
+    }, [connect, enabled])
     return st
+}
+
+function LoginScreen({ busy, error, onSubmit }) {
+    const [username, setUsername] = useState('')
+    const [password, setPassword] = useState('')
+
+    const submit = (e) => {
+        e.preventDefault()
+        onSubmit({ username, password })
+    }
+
+    return (
+        <div className="app" style={{ justifyContent: 'center', alignItems: 'center', padding: 24 }}>
+            <div className="card" style={{ width: '100%', maxWidth: 420, padding: '28px 30px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                    <div className="card-title" style={{ marginBottom: 6 }}>Secure Login</div>
+                    <div style={{ color: 'var(--text-3)', fontSize: '0.88rem' }}>
+                        Sign in to access robot control and vision data.
+                    </div>
+                </div>
+
+                <form onSubmit={submit} style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <input
+                        className="input"
+                        type="text"
+                        autoComplete="username"
+                        placeholder="Username"
+                        value={username}
+                        onChange={(e) => setUsername(e.target.value)}
+                        style={{ padding: '20px 16px', fontSize: '1rem' }}
+                    />
+                    <input
+                        className="input"
+                        type="password"
+                        autoComplete="current-password"
+                        placeholder="Password"
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        style={{ padding: '20px 16px', fontSize: '1rem' }}
+                    />
+                    {error && (
+                        <div style={{ color: 'var(--danger)', fontSize: '0.82rem' }}>
+                            {error}
+                        </div>
+                    )}
+                    <button className="btn btn-primary" type="submit" disabled={busy} style={{ padding: '10px 16px' }}>
+                        {busy ? 'Signing in...' : 'Sign In'}
+                    </button>
+                </form>
+            </div>
+        </div>
+    )
 }
 
 // ─── Sub-components ──────────────────────────────────────────────
@@ -236,13 +298,19 @@ const TABS = [
     { id: 'vision', label: 'Vision TCP' },
     { id: 'vision-db', label: 'Vision DB' },
     { id: 'results', label: 'Results' },
+    { id: 'all-images', label: 'All Images' },
 ]
 
 export default function App() {
+    const [authChecked, setAuthChecked] = useState(false)
+    const [authenticated, setAuthenticated] = useState(false)
+    const [authBusy, setAuthBusy] = useState(false)
+    const [authError, setAuthError] = useState('')
     const [tab, setTab] = useState('control')
     const [joints, setJoints] = useState(Array(6).fill(0))
     const [tcp, setTcp] = useState(null)
     const [currentTool, setCurrentTool] = useState('flange')
+    const [currentTcpName, setCurrentTcpName] = useState('tcp_gripper_A')
     const [lastTs, setLastTs] = useState(null)
     const [logs, setLogs] = useState([{ ts: Date.now(), text: 'Panel ready.', type: 'info' }])
     const logRef = useRef(null)
@@ -269,6 +337,7 @@ export default function App() {
         if (d.type === 'joint_states') { setJoints(d.positions_deg); setLastTs(d.timestamp) }
         if (d.type === 'tcp_pose') setTcp(d)
         if (d.type === 'current_tool' || d.type === 'current_t') setCurrentTool(d.name)
+        if (d.type === 'current_tcp') setCurrentTcpName(d.name)
         if (d.type === 'connection_status') setRosAlive(d.connected)
         if (d.type === 'log') {
             const nextId = ++programLogIdRef.current
@@ -276,16 +345,34 @@ export default function App() {
         }
     }, [])
 
-    const ws = useWS(`ws://${location.hostname}:8000/ws`, onMsg)
+    const ws = useWS(`ws://${location.hostname}:8000/ws`, onMsg, authenticated)
     const ros = ws === 'connected' && rosAlive
 
     useEffect(() => {
+        const loadAuth = async () => {
+            try {
+                const r = await fetch('/api/auth/status')
+                const d = await r.json()
+                setAuthenticated(Boolean(d.authenticated))
+            } catch {
+                setAuthenticated(false)
+            } finally {
+                setAuthChecked(true)
+            }
+        }
+
+        loadAuth()
+    }, [])
+
+    useEffect(() => {
+        if (!authenticated) return
         if (ws === 'connected') addLog('ROS 2 bridge connected.', 'success')
         if (ws === 'disconnected') addLog('Reconnecting…', 'warning')
-    }, [ws, addLog])
+    }, [ws, addLog, authenticated])
 
     useEffect(() => { if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight }, [logs])
     useEffect(() => {
+        if (!authenticated) return
         const loadVisionCommands = async () => {
             try {
                 const r = await fetch('/api/vision/commands')
@@ -299,7 +386,38 @@ export default function App() {
         }
 
         loadVisionCommands()
-    }, [addLog])
+    }, [addLog, authenticated])
+
+    const doLogin = async ({ username, password }) => {
+        setAuthBusy(true)
+        setAuthError('')
+        try {
+            const r = await fetch('/api/auth/login', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+            })
+            const d = await r.json()
+            if (!r.ok || !d.success) {
+                setAuthError(d.detail || d.error || 'Login failed')
+                return
+            }
+            setAuthenticated(true)
+        } catch (error) {
+            setAuthError(error.message || 'Login failed')
+        } finally {
+            setAuthBusy(false)
+            setAuthChecked(true)
+        }
+    }
+
+    const doLogout = async () => {
+        try {
+            await fetch('/api/auth/logout', { method: 'POST' })
+        } catch { }
+        setAuthenticated(false)
+        setAuthError('')
+    }
 
     const statusLabel = { connected: 'Live', connecting: 'Connecting…', disconnected: 'Offline', error: 'Error' }[ws]
     const fmtTs = ts => ts ? new Date(ts * 1000).toLocaleTimeString('en-GB', { hour12: false }) : '--'
@@ -380,6 +498,18 @@ export default function App() {
         }
     }
 
+    if (!authChecked) {
+        return (
+            <div className="app" style={{ justifyContent: 'center', alignItems: 'center', padding: 24, color: 'var(--text-2)' }}>
+                Checking session...
+            </div>
+        )
+    }
+
+    if (!authenticated) {
+        return <LoginScreen busy={authBusy} error={authError} onSubmit={doLogin} />
+    }
+
     return (
         <div className="app">
             {/* Topbar */}
@@ -387,13 +517,13 @@ export default function App() {
                 <div className="topbar-brand">
                     <div className="logo-box"></div>
                     <div>
-                        <h1>Operator of the Future<span style={{ color: 'var(--text-2)', fontWeight: 400 }}> · IPC Control</span></h1>
-                        <span>ROS 2 Humble / MoveIt 2 — DR DART Virtual</span>
+                        <h1>Operator of the Future<span style={{ color: 'var(--text-2)', fontWeight: 400 }}> · Affix Engineering B.V.</span></h1>
+                        <span>ROS 2 Humble</span>
                     </div>
                 </div>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <button className="btn btn-secondary" style={{ padding: '7px 14px' }} onClick={doHome} disabled={!ros}>Home</button>
                     <button className="btn btn-danger" style={{ padding: '7px 14px' }} onClick={doStop}>Stop</button>
+                    <button className="btn btn-secondary" style={{ padding: '7px 14px' }} onClick={doLogout}>Logout</button>
                     <div className="status-badge">
                         <div className={`status-dot ${ws}`} />{statusLabel}
                     </div>
@@ -415,7 +545,7 @@ export default function App() {
             </div>
 
             {/* Content */}
-            <div style={{ flex: 1, padding: '20px 28px', maxWidth: 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
+            <div style={{ flex: 1, padding: '20px 28px', maxWidth: tab === 'operation' ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
 
                 {/* ── CONTROL TAB ── */}
                 {tab === 'control' && (
@@ -469,7 +599,7 @@ export default function App() {
                         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
                             <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
                                 <div className="card-title" style={{ padding: '16px 16px 0 16px', marginBottom: 12 }}>3D Robot Simulation</div>
-                                <ViewerPanel />
+                                <ViewerPanel currentTcpName={currentTcpName} />
                             </div>
                             <div className="card">
                                 <div className="card-title">Jogging & Move to Target</div>
@@ -491,7 +621,7 @@ export default function App() {
                     </div>
                 )}
 
-                {tab === 'operation' && <OperationPanel ros={ros} speed={globalSpeed} setSpeed={setGlobalSpeed} joints={joints} tcp={tcp} currentTool={currentTool} programLogs={programLogs} />}
+                {tab === 'operation' && <OperationPanel ros={ros} speed={globalSpeed} setSpeed={setGlobalSpeed} joints={joints} tcp={tcp} currentTool={currentTool} currentTcpName={currentTcpName} programLogs={programLogs} />}
                 {tab === 'io' && <IOPanel ros={ros} />}
                 {tab === 'variables' && <VariablesPanel />}
                 {tab === 'program' && <ProgramPanel ros={ros} />}
@@ -660,6 +790,7 @@ export default function App() {
                 })()}
                 {tab === 'vision-db' && <VisionDbPanel />}
                 {tab === 'results' && <ResultsPanel />}
+                {tab === 'all-images' && <AllImagesPanel />}
             </div>
         </div>
     )

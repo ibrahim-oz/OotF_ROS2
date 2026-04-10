@@ -36,7 +36,9 @@ import traceback
 import subprocess
 import signal
 import sqlite3
+import secrets
 from typing import Set, Dict, Any, Optional, List
+import websockets
 
 import rclpy
 from rclpy.node import Node
@@ -47,6 +49,7 @@ from dsr_msgs2.msg import RobotStateRt
 
 from dsr_msgs2.srv import (
     GetCurrentPosx,
+    GetCurrentToolFlangePosx,
     SetCurrentTcp,
     GetCurrentTcp,
     MoveJoint,
@@ -69,9 +72,9 @@ from dsr_msgs2.srv import (
     GetCurrentTool,
 )
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
@@ -96,8 +99,21 @@ app.mount(
     name="meshes",
 )
 
+app.mount(
+    "/dsr_description2/mujoco_assets",
+    StaticFiles(
+        directory="/home/intern/doosan_ipc_production/ipc_ws/src/doosan-robot2/dsr_description2/mujoco_models"
+    ),
+    name="mujoco_assets",
+)
+
 RESULTS_IMAGES_DIR = os.getenv("RESULTS_IMAGES_DIR", "/mnt/affix_images").strip()
+ALL_IMAGES_DIR = os.getenv("ALL_IMAGES_DIR", "/mnt/affix_all_images").strip()
 VISION_DB_PATH = os.getenv("VISION_DB_PATH", "").strip()
+ROBOT_MODEL = os.getenv("ROBOT_MODEL", "h2017").strip().lower()
+ROBOT_COLOR = os.getenv("ROBOT_COLOR", "white").strip().lower()
+ROBOT_URDF_DIR = "/home/intern/doosan_ipc_production/ipc_ws/src/doosan-robot2/dsr_description2/urdf"
+ROBOT_XACRO_PATH = "/home/intern/doosan_ipc_production/ipc_ws/src/doosan-robot2/dsr_description2/xacro"
 VISION_DB_CANDIDATES = [
     VISION_DB_PATH,
     "/mnt/affix_db/Buffer.db",
@@ -116,6 +132,11 @@ latest_speed = 100
 latest_solution_space = 0
 _startup_time = time.time()
 active_tool = "tcp_gripper_A"
+AUTH_USERNAME = os.getenv("UI_AUTH_USERNAME", "affix")
+AUTH_PASSWORD = os.getenv("UI_AUTH_PASSWORD", "AImatters")
+SESSION_COOKIE = "affix_session"
+active_sessions: Set[str] = set()
+ROSBRIDGE_PROXY_URL = os.getenv("ROSBRIDGE_PROXY_URL", "ws://127.0.0.1:9090").strip()
 
 # ─── Mock IO State (for virtual emulator) ─────────────────────────
 # Doosan convention: 1 = OFF, 0 = ON
@@ -125,6 +146,35 @@ mock_do_state = [1] * 16
 # ─── Variables Storage ───────────────────────────────────────────
 
 VARS_FILE = "variables.json"
+
+
+class LoginReq(BaseModel):
+    username: str = ""
+    password: str = ""
+
+
+def _is_authorized_request(request: Request) -> bool:
+    session_id = request.cookies.get(SESSION_COOKIE)
+    return bool(session_id and session_id in active_sessions)
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    if (
+        request.method == "OPTIONS"
+        or path.startswith("/api/auth/")
+        or path.startswith("/docs")
+        or path.startswith("/openapi")
+        or path.startswith("/redoc")
+        or path.startswith("/dsr_description2/")
+    ):
+        return await call_next(request)
+
+    if path.startswith("/api/") and not _is_authorized_request(request):
+        return JSONResponse({"success": False, "error": "unauthorized"}, status_code=401)
+
+    return await call_next(request)
 
 
 def _init_default_vars() -> Dict[str, Any]:
@@ -323,6 +373,7 @@ class RosBridge(Node):
             return self.create_client(stype, name, callback_group=g)
 
         self.c_posx = cli(GetCurrentPosx, "/aux_control/get_current_posx")
+        self.c_tool_flange_posx = cli(GetCurrentToolFlangePosx, "/aux_control/get_current_tool_flange_posx")
         self.c_move_j = cli(MoveJoint, "/motion/move_joint")
         self.c_move_jx = cli(MoveJointx, "/motion/move_jointx")
         self.c_move_sj = cli(MoveSplineJoint, "/motion/move_spline_joint")
@@ -477,6 +528,11 @@ async def _broadcast(msg: str):
 
 @app.websocket("/ws")
 async def ws_ep(ws: WebSocket):
+    session_id = ws.cookies.get(SESSION_COOKIE)
+    if not session_id or session_id not in active_sessions:
+        await ws.close(code=1008)
+        return
+
     await ws.accept()
     clients.add(ws)
 
@@ -495,7 +551,163 @@ async def ws_ep(ws: WebSocket):
         clients.discard(ws)
 
 
+@app.websocket("/rosbridge")
+async def rosbridge_proxy_ep(ws: WebSocket):
+    session_id = ws.cookies.get(SESSION_COOKIE)
+    if not session_id or session_id not in active_sessions:
+        await ws.close(code=1008)
+        return
+
+    await ws.accept()
+
+    upstream = None
+    relay_tasks = []
+
+    async def client_to_upstream():
+        while True:
+            message = await ws.receive()
+            if message.get("type") == "websocket.disconnect":
+                break
+            if "text" in message and message["text"] is not None:
+                await upstream.send(message["text"])
+            elif "bytes" in message and message["bytes"] is not None:
+                await upstream.send(message["bytes"])
+
+    async def upstream_to_client():
+        while True:
+            message = await upstream.recv()
+            if isinstance(message, bytes):
+                await ws.send_bytes(message)
+            else:
+                await ws.send_text(message)
+
+    try:
+        upstream = await websockets.connect(ROSBRIDGE_PROXY_URL)
+        relay_tasks = [
+            asyncio.create_task(client_to_upstream()),
+            asyncio.create_task(upstream_to_client()),
+        ]
+        done, pending = await asyncio.wait(relay_tasks, return_when=asyncio.FIRST_COMPLETED)
+        for task in pending:
+            task.cancel()
+        for task in done:
+            exc = task.exception()
+            if exc:
+                raise exc
+    except WebSocketDisconnect:
+        pass
+    except Exception as e:
+        try:
+            await ws.close(code=1011, reason=f"rosbridge proxy error: {type(e).__name__}")
+        except Exception:
+            pass
+    finally:
+        for task in relay_tasks:
+            task.cancel()
+        if upstream is not None:
+            try:
+                await upstream.close()
+            except Exception:
+                pass
+
+
 # ─── Status / Diagnostics ───────────────────────────────────────
+
+@app.get("/api/auth/status")
+def api_auth_status(request: Request):
+    return {"success": True, "authenticated": _is_authorized_request(request)}
+
+
+@app.get("/api/robot/urdf")
+def api_robot_urdf():
+    xacro_file = os.path.join(ROBOT_XACRO_PATH, f"{ROBOT_MODEL}.urdf.xacro")
+    if os.path.exists(xacro_file):
+        try:
+            result = subprocess.run(
+                [
+                    "xacro",
+                    xacro_file,
+                    f"color:={ROBOT_COLOR}",
+                    "namespace:=",
+                    "gripper:=none",
+                    "use_gazebo:=false",
+                    "use_mujoco:=false",
+                    "host:=",
+                    "port:=",
+                    "rt_host:=",
+                    "mode:=virtual",
+                    f"model:={ROBOT_MODEL}",
+                    "update_rate:=100",
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            return {
+                "success": True,
+                "model": ROBOT_MODEL,
+                "color": ROBOT_COLOR,
+                "path": xacro_file,
+                "source": "xacro",
+                "urdf": result.stdout,
+            }
+        except Exception as e:
+            pass
+
+    candidates = [
+        os.path.join(ROBOT_URDF_DIR, f"{ROBOT_MODEL}.urdf"),
+        os.path.join(ROBOT_URDF_DIR, f"{ROBOT_MODEL}.{ROBOT_COLOR}.urdf"),
+    ]
+
+    for path in candidates:
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8") as f:
+                return {
+                    "success": True,
+                    "model": ROBOT_MODEL,
+                    "color": ROBOT_COLOR,
+                    "path": path,
+                    "urdf": f.read(),
+                }
+
+    return {
+        "success": False,
+        "model": ROBOT_MODEL,
+        "color": ROBOT_COLOR,
+        "error": f"URDF file not found under {ROBOT_URDF_DIR}",
+        "candidates": candidates,
+    }
+
+
+@app.post("/api/auth/login")
+def api_auth_login(body: LoginReq):
+    if body.username != AUTH_USERNAME or body.password != AUTH_PASSWORD:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    session_id = secrets.token_urlsafe(32)
+    active_sessions.add(session_id)
+
+    response = JSONResponse({"success": True, "authenticated": True})
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=session_id,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        max_age=60 * 60 * 12,
+    )
+    return response
+
+
+@app.post("/api/auth/logout")
+def api_auth_logout(request: Request):
+    session_id = request.cookies.get(SESSION_COOKIE)
+    if session_id:
+        active_sessions.discard(session_id)
+
+    response = JSONResponse({"success": True})
+    response.delete_cookie(SESSION_COOKIE)
+    return response
 
 @app.get("/api/status")
 def api_status():
@@ -1221,6 +1433,73 @@ def _default_tool_offsets():
     }
 
 
+def _pose_xyz_deg_to_matrix(pos):
+    transform = np.eye(4)
+    transform[:3, 3] = np.array(pos[:3], dtype=float)
+    transform[:3, :3] = R.from_euler("xyz", pos[3:], degrees=True).as_matrix()
+    return transform
+
+
+def _get_live_tcp_offset():
+    if not ros_node or not latest_tcp:
+        return None
+
+    current_tcp_name = active_tool
+
+    try:
+        if ros_node.c_get_tcp.service_is_ready():
+            tcp_res = ros_node.call(ros_node.c_get_tcp, GetCurrentTcp.Request(), timeout=1.0)
+            if tcp_res and getattr(tcp_res, "success", False) and getattr(tcp_res, "info", "").strip():
+                current_tcp_name = tcp_res.info.strip()
+    except Exception:
+        pass
+
+    try:
+        req = GetCurrentToolFlangePosx.Request()
+        req.ref = 0
+        flange_res = ros_node.call(ros_node.c_tool_flange_posx, req, timeout=1.0)
+        if not flange_res or not getattr(flange_res, "success", False):
+            return None
+
+        flange_zyz = flange_res.pos
+        flange_xyz = _stable_euler(*zyz_to_xyz(flange_zyz[3], flange_zyz[4], flange_zyz[5]))
+        flange_pose = [
+            float(flange_zyz[0]),
+            float(flange_zyz[1]),
+            float(flange_zyz[2]),
+            float(flange_xyz[0]),
+            float(flange_xyz[1]),
+            float(flange_xyz[2]),
+        ]
+
+        tcp_pose = [
+            float(latest_tcp.get("x", 0.0)),
+            float(latest_tcp.get("y", 0.0)),
+            float(latest_tcp.get("z", 0.0)),
+            float(latest_tcp.get("rx", 0.0)),
+            float(latest_tcp.get("ry", 0.0)),
+            float(latest_tcp.get("rz", 0.0)),
+        ]
+
+        rel = np.linalg.inv(_pose_xyz_deg_to_matrix(flange_pose)) @ _pose_xyz_deg_to_matrix(tcp_pose)
+        rel_xyz = rel[:3, 3]
+        rel_rpy = R.from_matrix(rel[:3, :3]).as_euler("xyz", degrees=True)
+
+        return {
+            "name": current_tcp_name,
+            "offsets": [
+                round(float(rel_xyz[0]), 3),
+                round(float(rel_xyz[1]), 3),
+                round(float(rel_xyz[2]), 3),
+                round(float(rel_rpy[0]), 3),
+                round(float(rel_rpy[1]), 3),
+                round(float(rel_rpy[2]), 3),
+            ],
+        }
+    except Exception:
+        return None
+
+
 def load_tool_offsets():
     defaults = _default_tool_offsets()
     if os.path.exists(TOOLS_FILE):
@@ -1266,7 +1545,11 @@ def api_tool_set(b: ToolSetReq):
 
 @app.get("/api/tools/offsets")
 def api_tool_offsets_get():
-    return {"success": True, **load_tool_offsets()}
+    offsets = load_tool_offsets()
+    live = _get_live_tcp_offset()
+    if live and live.get("name"):
+        offsets[live["name"]] = live["offsets"]
+    return {"success": True, "offsets": offsets, "live": live}
 
 
 @app.post("/api/tools/offsets")
@@ -1386,6 +1669,63 @@ def api_results_image(name: str):
 
     safe_name = os.path.basename(name)
     path = os.path.join(RESULTS_IMAGES_DIR, safe_name)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="Image not found")
+
+    return FileResponse(path)
+
+
+@app.get("/api/all-images/folders")
+def api_all_images_folders():
+    if not os.path.isdir(ALL_IMAGES_DIR):
+        return {"success": False, "error": f"All images directory not found: {ALL_IMAGES_DIR}", "folders": []}
+
+    folders = []
+    for name in sorted(os.listdir(ALL_IMAGES_DIR)):
+        path = os.path.join(ALL_IMAGES_DIR, name)
+        if os.path.isdir(path):
+            folders.append(name)
+
+    return {"success": True, "folders": folders, "directory": ALL_IMAGES_DIR}
+
+
+@app.get("/api/all-images/folder/{folder_name}")
+def api_all_images_folder(folder_name: str):
+    if not os.path.isdir(ALL_IMAGES_DIR):
+        return {"success": False, "error": f"All images directory not found: {ALL_IMAGES_DIR}", "images": []}
+
+    safe_folder = os.path.basename(folder_name)
+    folder_path = os.path.join(ALL_IMAGES_DIR, safe_folder)
+    if not os.path.isdir(folder_path):
+        raise HTTPException(status_code=404, detail="Folder not found")
+
+    allowed = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
+    items = []
+
+    for name in sorted(os.listdir(folder_path), reverse=True):
+        path = os.path.join(folder_path, name)
+        ext = os.path.splitext(name)[1].lower()
+        if os.path.isfile(path) and ext in allowed:
+            stat = os.stat(path)
+            items.append({
+                "name": name,
+                "folder": safe_folder,
+                "url": f"/api/all-images/file/{safe_folder}/{name}",
+                "size": stat.st_size,
+                "mtime": stat.st_mtime,
+            })
+
+    return {"success": True, "folder": safe_folder, "images": items, "directory": folder_path}
+
+
+@app.get("/api/all-images/file/{folder_name}/{name:path}")
+def api_all_images_file(folder_name: str, name: str):
+    if not os.path.isdir(ALL_IMAGES_DIR):
+        raise HTTPException(status_code=404, detail="All images directory not found")
+
+    safe_folder = os.path.basename(folder_name)
+    safe_name = os.path.basename(name)
+    path = os.path.join(ALL_IMAGES_DIR, safe_folder, safe_name)
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="Image not found")
 
