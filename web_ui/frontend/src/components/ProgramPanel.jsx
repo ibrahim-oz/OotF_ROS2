@@ -175,10 +175,10 @@ export default function ProgramPanel({ ros }) {
     }, [])
 
     return (
-        <div style={{ display: 'grid', gridTemplateColumns: '320px minmax(0, 1fr)', gap: 20, alignItems: 'stretch', width: '100%' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '280px minmax(0, 1fr)', gap: 14, alignItems: 'stretch', width: '100%' }}>
 
             {/* ── Library Sidebar ── */}
-            <div className="card" style={{ flexShrink: 0, padding: '16px 18px', display: 'flex', flexDirection: 'column', minHeight: 720 }}>
+            <div className="card" style={{ flexShrink: 0, padding: '14px 16px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                 <div className="card-title" style={{ marginBottom: 8 }}>Programs Library</div>
                 <div style={{ color: 'var(--text-3)', fontSize: '0.82rem', marginBottom: 12 }}>
                     Save reusable robot programs and reload them quickly.
@@ -195,7 +195,7 @@ export default function ProgramPanel({ ros }) {
 
                     <div style={{ marginTop: 8, borderTop: '1px solid var(--border-light)', paddingTop: 12 }}>
                         {programs.length === 0 && <div style={{ color: 'var(--text-3)', fontSize: '0.8rem' }}>No saved programs.</div>}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 280px)', overflowY: 'auto', paddingRight: 4 }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 'calc(100vh - 240px)', overflowY: 'auto', paddingRight: 4 }}>
                             {programs.map(p => (
                                 <div key={p} style={{
                                     display: 'flex', justifyContent: 'space-between', alignItems: 'center',
@@ -216,10 +216,10 @@ export default function ProgramPanel({ ros }) {
                 </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateRows: 'minmax(0, 1fr) 160px', gap: 16, minWidth: 0 }}>
+            <div style={{ display: 'grid', gridTemplateRows: 'minmax(0, 1fr) 132px', gap: 12, minWidth: 0 }}>
 
                 {/* ── Editor ── */}
-                <div className="card" style={{ padding: '16px 18px', display: 'flex', flexDirection: 'column', minHeight: 720 }}>
+                <div className="card" style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, gap: 12, flexWrap: 'wrap' }}>
                         <div>
                             <div className="card-title" style={{ marginBottom: 4 }}>Python Program Editor</div>
@@ -245,7 +245,7 @@ export default function ProgramPanel({ ros }) {
                     <div style={{
                         position: 'relative',
                         flex: 1,
-                        minHeight: 560,
+                        minHeight: 440,
                         border: '1px solid var(--border)',
                         borderRadius: 10,
                         overflow: 'hidden',
@@ -275,14 +275,14 @@ export default function ProgramPanel({ ros }) {
                                 aria-hidden="true"
                                 style={{
                                     margin: 0,
-                                    padding: 16,
+                                    padding: 12,
                                     minHeight: '100%',
                                     height: '100%',
                                     overflow: 'auto',
                                     whiteSpace: 'pre',
                                     fontFamily: "'Courier New', monospace",
-                                    fontSize: '0.9rem',
-                                    lineHeight: 1.7,
+                                    fontSize: '0.84rem',
+                                    lineHeight: 1.55,
                                     color: '#c8d3f5',
                                     pointerEvents: 'none'
                                 }}
@@ -303,10 +303,10 @@ export default function ProgramPanel({ ros }) {
                                     color: 'transparent',
                                     caretColor: '#f8fafc',
                                     fontFamily: "'Courier New', monospace",
-                                    fontSize: '0.9rem',
-                                    lineHeight: 1.7,
+                                    fontSize: '0.84rem',
+                                    lineHeight: 1.55,
                                     border: 'none',
-                                    padding: 16,
+                                    padding: 12,
                                     resize: 'vertical',
                                     outline: 'none',
                                     whiteSpace: 'pre',
@@ -328,7 +328,7 @@ export default function ProgramPanel({ ros }) {
                 </div>
 
                 {/* ── Log ── */}
-                <div className="card" style={{ padding: '14px 18px', display: 'flex', flexDirection: 'column', minHeight: 160 }}>
+                <div className="card" style={{ padding: '12px 16px', display: 'flex', flexDirection: 'column', minHeight: 132 }}>
                     <div className="card-title" style={{ marginBottom: 10 }}>Execution Log</div>
                     <div className="log-entries" ref={logRef} style={{ flex: 1, minHeight: 0 }}>
                         {log.length === 0 && <div className="log-entry">Ready. Press ▶ Run to execute.</div>}

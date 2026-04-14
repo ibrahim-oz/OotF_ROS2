@@ -4,7 +4,7 @@ const FIELDS = ['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz'];
 const UNITS = ['mm', 'mm', 'mm', '°', '°', '°'];
 const COLORS = ['#f4460b', '#2f5667', '#7a9fad', '#c0340a', '#4a7f94', '#94a3b8'];
 
-const DEFAULT_OFFSET = [0, 0, 500, 0, 0, 0]; // X Y Z Rx Ry Rz
+const DEFAULT_OFFSET = [0, 0, 235, 0, 0, 0]; // X Y Z Rx Ry Rz
 
 function ToolCard({ name, label, isActive, offsets }) {
     return (
@@ -52,8 +52,9 @@ export default function ToolsPanel({ currentTool }) {
         // Fetch offsets for display
         fetch('/api/tools/offsets').then(r => r.json()).then(d => {
             if (d.success) {
-                setOffsetsA(d.tcp_gripper_A || [...DEFAULT_OFFSET]);
-                setOffsetsB(d.tcp_gripper_B || [...DEFAULT_OFFSET]);
+                const offsets = d.offsets ?? {}
+                setOffsetsA(offsets.tcp_gripper_A || [...DEFAULT_OFFSET]);
+                setOffsetsB(offsets.tcp_gripper_B || [...DEFAULT_OFFSET]);
             }
         }).catch(() => { });
     }, []);

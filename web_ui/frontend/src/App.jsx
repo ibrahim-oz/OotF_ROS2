@@ -11,17 +11,38 @@ import AllImagesPanel from './components/AllImagesPanel.jsx'
 
 // ─── Constants ───────────────────────────────────────────────────
 const JOINT_NAMES = ['J1', 'J2', 'J3', 'J4', 'J5', 'J6']
-const JOG_SPEED = 10   // % of max speed while button held
 const JOG_JOINT_AXES = [0, 1, 2, 3, 4, 5]     // jog_axis values for joints
 const JOG_CART_AXES = [6, 7, 8, 9, 10, 11]   // Tx,Ty,Tz,Rx,Ry,Rz
 const CART_LABELS = ['X', 'Y', 'Z', 'Rx', 'Ry', 'Rz']
 const CART_UNITS = ['mm', 'mm', 'mm', '°', '°', '°']
+const MANUAL_SPEED_LIMIT = 25
 
 // ─── Tiny helpers ────────────────────────────────────────────────
+async function readJsonSafe(response) {
+    const raw = await response.text()
+    if (!raw) {
+        return {
+            success: false,
+            error: `Empty server response (${response.status})`,
+        }
+    }
+
+    try {
+        return JSON.parse(raw)
+    } catch {
+        return {
+            success: false,
+            error: response.ok
+                ? 'Server returned an invalid JSON response'
+                : raw,
+        }
+    }
+}
+
 const post = (url, body) => fetch(url, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body)
-}).then(r => r.json())
+}).then(readJsonSafe)
 
 function useWS(url, onMsg, enabled = true) {
     const ref = useRef(null)
@@ -136,9 +157,8 @@ function TcpRow({ tcp }) {
     )
 }
 
-function JogButtons({ joints, tcp, ros }) {
+function JogButtons({ joints, tcp, ros, jogSpeed = 10 }) {
     const [jStep, setJStep] = useState(5)
-    const [jogMode, setJogMode] = useState('joint')   // 'joint' | 'cart'
     const [busy, setBusy] = useState(false)
     const [target, setTarget] = useState({
         joint: ['0', '0', '0', '0', '0', '0'],
@@ -152,7 +172,7 @@ function JogButtons({ joints, tcp, ros }) {
     const startJog = (axisIdx, direction) => {
         if (!ros) return
         lastAxisRef.current = axisIdx
-        const doJog = () => post('/api/jog', { axis: axisIdx, speed: direction * JOG_SPEED })
+        const doJog = () => post('/api/jog', { axis: axisIdx, speed: direction * jogSpeed })
         clearInterval(holdRef.current)
         doJog()
         holdRef.current = setInterval(doJog, 180)
@@ -163,14 +183,13 @@ function JogButtons({ joints, tcp, ros }) {
         post('/api/jog', { axis: lastAxisRef.current, speed: 0 })
     }
 
-    const moveTo = async () => {
+    const moveTo = async (mode) => {
         if (!ros) return
         setBusy(true); setMsg('')
-        // jogMode 'cart' maps to target key 'tcp'
-        const targetKey = jogMode === 'cart' ? 'tcp' : 'joint'
+        const targetKey = mode === 'cart' ? 'tcp' : 'joint'
         const vals = target[targetKey].map(Number)
-        const endpoint = jogMode === 'joint' ? '/api/move/joint' : '/api/move/tcp'
-        const body = jogMode === 'joint'
+        const endpoint = mode === 'joint' ? '/api/move/joint' : '/api/move/tcp'
+        const body = mode === 'joint'
             ? { pos: vals, vel: 30, acc: 60, sync_type: 1 }
             : { pos: vals, vel: 100, acc: 200, sync_type: 1 }
         const r = await post(endpoint, body)
@@ -178,29 +197,22 @@ function JogButtons({ joints, tcp, ros }) {
         setBusy(false)
     }
 
-    const fillFromRobot = () => {
-        if (jogMode === 'joint') setTarget(t => ({ ...t, joint: joints.map(v => v.toFixed(2)) }))
+    const fillFromRobot = (mode) => {
+        if (mode === 'joint') setTarget(t => ({ ...t, joint: joints.map(v => v.toFixed(2)) }))
         else if (tcp) setTarget(t => ({ ...t, tcp: [tcp.x, tcp.y, tcp.z, tcp.rx, tcp.ry, tcp.rz].map(v => v.toFixed(2)) }))
     }
 
     useEffect(() => () => clearInterval(holdRef.current), [])
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
 
-            {/* Mode selector */}
-            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', paddingBottom: 10 }}>
-                {['joint', 'cart'].map(m => (
-                    <button key={m} className="btn btn-secondary"
-                        style={{ padding: '6px 18px', ...(jogMode === m ? { borderColor: 'var(--accent)', color: 'var(--accent)' } : {}) }}
-                        onClick={() => setJogMode(m)}>{m === 'joint' ? 'Joint Jog' : 'Cartesian Jog'}
-                    </button>
-                ))}
-            </div>
-
-            {/* ── Joint Jog ── */}
-            {jogMode === 'joint' && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, minHeight: 0 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                        Joint Jogging
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
                     {JOINT_NAMES.map((name, i) => (
                         <div key={name} style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
@@ -217,19 +229,55 @@ function JogButtons({ joints, tcp, ros }) {
                             </div>
                         </div>
                     ))}
-                </div>
-            )}
+                    </div>
 
-            {/* ── Cart Jog ── */}
-            {jogMode === 'cart' && (
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
+                    <div style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-2)' }}>
+                                Joint Move To Target
+                            </span>
+                            <button className="btn btn-secondary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => fillFromRobot('joint')}>
+                                From Robot
+                            </button>
+                        </div>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 10 }}>
+                            {JOINT_NAMES.map((lbl, i) => (
+                                <div key={lbl}>
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-3)', marginBottom: 4, textAlign: 'center' }}>{lbl}</div>
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        value={target.joint[i]}
+                                        onChange={e => {
+                                            const v = [...target.joint]; v[i] = e.target.value
+                                            setTarget(t => ({ ...t, joint: v }))
+                                        }}
+                                        style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 8px', color: 'var(--text-1)', fontSize: '0.8rem', textAlign: 'center' }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        <button className="btn btn-primary" style={{ padding: '8px 18px' }} onClick={() => moveTo('joint')} disabled={!ros || busy}>
+                            {busy ? 'Moving…' : 'Execute Joint Move'}
+                        </button>
+                    </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
+                    <div style={{ fontSize: '0.74rem', fontWeight: 700, color: 'var(--text-2)', letterSpacing: '0.08em', textTransform: 'uppercase' }}>
+                        Cartesian Jogging
+                    </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 10 }}>
                     {CART_LABELS.map((lbl, i) => {
                         const ax = JOG_CART_AXES[i]
+                        const tcpValue = tcp?.[lbl.toLowerCase()]
                         return (
                             <div key={lbl} style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                                     <span style={{ fontWeight: 600 }}>{lbl}</span>
-                                    <span style={{ color: 'var(--text-2)', fontSize: '0.75rem' }}>{CART_UNITS[i]}</span>
+                                    <span style={{ color: 'var(--text-2)', fontSize: '0.75rem', fontVariantNumeric: 'tabular-nums' }}>
+                                        {tcpValue != null ? `${tcpValue.toFixed(1)} ${CART_UNITS[i]}` : CART_UNITS[i]}
+                                    </span>
                                 </div>
                                 <div style={{ display: 'flex', gap: 6 }}>
                                     <button className="btn btn-secondary" style={{ flex: 1, padding: '8px 0', fontSize: '1.2rem' }}
@@ -242,47 +290,42 @@ function JogButtons({ joints, tcp, ros }) {
                             </div>
                         )
                     })}
-                </div>
-            )}
+                    </div>
 
-            {/* ── Move to Target ── */}
-            <div style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 8, padding: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                    <span style={{ fontSize: '0.75rem', fontWeight: 600, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-2)' }}>
-                        Move to Target — {jogMode === 'joint' ? 'Joint Angles (°)' : 'TCP Position (mm/°)'}
-                    </span>
-                    <button className="btn btn-secondary" style={{ padding: '4px 12px', fontSize: '0.75rem' }} onClick={fillFromRobot}>
-                        From Robot
-                    </button>
-                </div>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 8, marginBottom: 12 }}>
-                    {(jogMode === 'joint' ? JOINT_NAMES : CART_LABELS).map((lbl, i) => (
-                        <div key={lbl}>
-                            <div style={{ fontSize: '0.7rem', color: 'var(--text-3)', marginBottom: 4, textAlign: 'center' }}>{lbl}</div>
-                            <input type="number" step="0.1"
-                                value={target[jogMode === 'cart' ? 'tcp' : 'joint'][i]}
-                                onChange={e => {
-                                    const tk = jogMode === 'cart' ? 'tcp' : 'joint'
-                                    const v = [...target[tk]]; v[i] = e.target.value
-                                    setTarget(t => ({ ...t, [tk]: v }))
-                                }}
-                                style={{
-                                    width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)',
-                                    borderRadius: 6, padding: '7px 8px', color: 'var(--text-1)', fontFamily: 'inherit',
-                                    fontSize: '0.85rem', textAlign: 'center', outline: 'none'
-                                }}
-                            />
+                    <div style={{ background: 'var(--bg-card2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-2)' }}>
+                                Cartesian Move To Target
+                            </span>
+                            <button className="btn btn-secondary" style={{ width: 'auto', padding: '4px 10px', fontSize: '0.72rem' }} onClick={() => fillFromRobot('cart')}>
+                                From Robot
+                            </button>
                         </div>
-                    ))}
-                </div>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <button className="btn btn-primary" style={{ padding: '8px 24px' }}
-                        onClick={moveTo} disabled={!ros || busy}>
-                        {busy ? '⏳ Moving…' : '▶ Execute'}
-                    </button>
-                    {msg && <span style={{ fontSize: '0.82rem', color: msg.startsWith('✔') ? 'var(--success)' : 'var(--danger)' }}>{msg}</span>}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8, marginBottom: 10 }}>
+                            {CART_LABELS.map((lbl, i) => (
+                                <div key={lbl}>
+                                    <div style={{ fontSize: '0.68rem', color: 'var(--text-3)', marginBottom: 4, textAlign: 'center' }}>{lbl}</div>
+                                    <input
+                                        type="number"
+                                        step="0.1"
+                                        value={target.tcp[i]}
+                                        onChange={e => {
+                                            const v = [...target.tcp]; v[i] = e.target.value
+                                            setTarget(t => ({ ...t, tcp: v }))
+                                        }}
+                                        style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 8px', color: 'var(--text-1)', fontSize: '0.8rem', textAlign: 'center' }}
+                                    />
+                                </div>
+                            ))}
+                        </div>
+                        <button className="btn btn-primary" style={{ padding: '8px 18px' }} onClick={() => moveTo('cart')} disabled={!ros || busy}>
+                            {busy ? 'Moving…' : 'Execute Cartesian Move'}
+                        </button>
+                    </div>
                 </div>
             </div>
+
+            {msg && <div style={{ fontSize: '0.82rem', color: msg.startsWith('✔') ? 'var(--success)' : 'var(--danger)' }}>{msg}</div>}
         </div>
     )
 }
@@ -352,7 +395,7 @@ export default function App() {
         const loadAuth = async () => {
             try {
                 const r = await fetch('/api/auth/status')
-                const d = await r.json()
+                const d = await readJsonSafe(r)
                 setAuthenticated(Boolean(d.authenticated))
             } catch {
                 setAuthenticated(false)
@@ -397,9 +440,9 @@ export default function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password }),
             })
-            const d = await r.json()
+            const d = await readJsonSafe(r)
             if (!r.ok || !d.success) {
-                setAuthError(d.detail || d.error || 'Login failed')
+                setAuthError(d.detail || d.error || `Login failed (${r.status})`)
                 return
             }
             setAuthenticated(true)
@@ -421,6 +464,22 @@ export default function App() {
 
     const statusLabel = { connected: 'Live', connecting: 'Connecting…', disconnected: 'Offline', error: 'Error' }[ws]
     const fmtTs = ts => ts ? new Date(ts * 1000).toLocaleTimeString('en-GB', { hour12: false }) : '--'
+
+    const applyManualSpeed = async (nextValue) => {
+        const limited = Math.min(Math.max(Number(nextValue) || 1, 1), MANUAL_SPEED_LIMIT)
+        setGlobalSpeed(limited)
+        if (!ros) {
+            addLog('Not connected to ROS', 'error')
+            return
+        }
+        try {
+            const r = await post('/api/speed', { speed: limited })
+            if (r.success) addLog(`Manual speed set to ${limited}%`, 'info')
+            else addLog('Failed to set speed', 'error')
+        } catch {
+            addLog('Speed request failed', 'error')
+        }
+    }
 
     const doHome = async () => { addLog('HOME…', 'info'); const r = await post('/api/home', {}); addLog(r.success ? '✔ Home sent' : '✘ Failed', r.success ? 'success' : 'error') }
     const doStop = async () => { addLog('STOP!', 'warning'); await post('/api/move/stop', {}); addLog('Stop sent.', 'warning') }
@@ -545,69 +604,64 @@ export default function App() {
             </div>
 
             {/* Content */}
-            <div style={{ flex: 1, padding: '20px 28px', maxWidth: (tab === 'operation' || tab === 'program' || tab === 'all-images' || tab === 'results' || tab === 'vision-db') ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
+            <div style={{ flex: 1, padding: '14px 18px', maxWidth: (tab === 'control' || tab === 'operation' || tab === 'program' || tab === 'all-images' || tab === 'results' || tab === 'vision-db') ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
 
                 {/* ── CONTROL TAB ── */}
                 {tab === 'control' && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                    <div style={{ display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr) auto 132px', gap: 12, height: 'calc(100vh - 132px)', overflow: 'hidden' }}>
 
-                        {/* Row 1: Joints + TCP */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '3fr 2fr', gap: 20 }}>
-                            {/* Joints */}
-                            <div className="card">
-                                <div className="card-title">Joint States</div>
-                                <div className="joints-grid">
-                                    {JOINT_NAMES.map((n, i) => <JointCard key={n} name={n} deg={joints[i] || 0} />)}
-                                </div>
+                        <div className="card" style={{ padding: '10px 14px' }}>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 12, alignItems: 'center', fontSize: '0.78rem' }}>
+                                <div><span style={{ color: 'var(--text-3)' }}>Mode</span> <span style={{ fontWeight: 700, color: 'var(--success)', marginLeft: 6 }}>Auto-Detect (ROS)</span></div>
+                                <div><span style={{ color: 'var(--text-3)' }}>Robot IP</span> <span style={{ fontWeight: 700, marginLeft: 6 }}>Configured in Launch</span></div>
+                                <div><span style={{ color: 'var(--text-3)' }}>Last Tick</span> <span style={{ fontWeight: 700, marginLeft: 6 }}>{fmtTs(lastTs)}</span></div>
                             </div>
-                            {/* TCP + System info */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                                <div className="card" style={{ flex: 1 }}>
-                                    <div className="card-title">TCP Position</div>
-                                    <TcpRow tcp={tcp} />
-                                </div>
-                                <div className="card">
-                                    <div className="card-title">System</div>
-                                    <div className="info-row"><span className="label">Mode</span><span className="val" style={{ color: 'var(--success)' }}>Auto-Detect (ROS)</span></div>
-                                    <div className="info-row"><span className="label">Robot IP</span><span className="val">Configured in Launch</span></div>
-                                    <div className="info-row"><span className="label">Last Tick</span><span className="val">{fmtTs(lastTs)}</span></div>
-                                </div>
-                                <div className="card">
-                                    <div className="card-title">Robot Speed Override</div>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                                        <input
-                                            type="range" min="1" max="100" value={globalSpeed}
-                                            onChange={(e) => setGlobalSpeed(parseInt(e.target.value))}
-                                            onMouseUp={async (e) => {
-                                                if (!ros) return addLog('Not connected to ROS', 'error')
-                                                const val = parseInt(e.target.value)
-                                                try {
-                                                    const r = await post('/api/speed', { speed: val })
-                                                    if (r.success) addLog(`Speed set to ${val}%`, 'info')
-                                                    else addLog('Failed to set speed', 'error')
-                                                } catch { addLog('Speed request failed', 'error') }
-                                            }}
-                                            style={{ flex: 1 }}
-                                        />
-                                        <span id="ctrl-speed-label" style={{ fontWeight: 600, minWidth: 40, textAlign: 'right' }}>{globalSpeed}%</span>
-                                    </div>
+                        </div>
+
+                        {/* Row 2: jogging + 3D */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'minmax(560px, 1.05fr) minmax(0, 1.25fr)', gap: 14, minHeight: 0 }}>
+                            <div className="card" style={{ minHeight: 0, overflow: 'auto', padding: '12px 14px' }}>
+                                <JogButtons joints={joints} tcp={tcp} ros={ros} jogSpeed={Math.min(globalSpeed, MANUAL_SPEED_LIMIT)} />
+                            </div>
+
+                            <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column', minHeight: 0 }}>
+                                <div className="card-title" style={{ padding: '12px 12px 0 12px', marginBottom: 8 }}>3D Visualization</div>
+                                <div style={{ padding: '0 12px 12px 12px', minHeight: 0 }}>
+                                    <ViewerPanel currentTcpName={currentTcpName} viewerHeight={520} />
                                 </div>
                             </div>
                         </div>
 
-                        {/* Row 2: Jog panel + 3D Viewer */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-                            <div className="card" style={{ padding: 0, overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                                <div className="card-title" style={{ padding: '16px 16px 0 16px', marginBottom: 12 }}>3D Robot Simulation</div>
-                                <ViewerPanel currentTcpName={currentTcpName} />
+                        {/* Row 3: Manual speed */}
+                        <div className="card" style={{ padding: '12px 14px' }}>
+                            <div className="card-title" style={{ marginBottom: 8 }}>Manual Robot Speed</div>
+                            <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) 84px 72px', gap: 10, alignItems: 'center' }}>
+                                <input
+                                    type="range"
+                                    min="1"
+                                    max={MANUAL_SPEED_LIMIT}
+                                    value={Math.min(globalSpeed, MANUAL_SPEED_LIMIT)}
+                                    onChange={(e) => setGlobalSpeed(Math.min(parseInt(e.target.value), MANUAL_SPEED_LIMIT))}
+                                    onMouseUp={(e) => applyManualSpeed(e.target.value)}
+                                    style={{ width: '100%' }}
+                                />
+                                <input
+                                    type="number"
+                                    min="1"
+                                    max={MANUAL_SPEED_LIMIT}
+                                    value={Math.min(globalSpeed, MANUAL_SPEED_LIMIT)}
+                                    onChange={(e) => setGlobalSpeed(Math.min(Math.max(parseInt(e.target.value || '1'), 1), MANUAL_SPEED_LIMIT))}
+                                    onBlur={(e) => applyManualSpeed(e.target.value)}
+                                    style={{ width: '100%', background: 'var(--bg-base)', border: '1px solid var(--border)', borderRadius: 6, padding: '7px 8px', color: 'var(--text-1)', fontSize: '0.82rem' }}
+                                />
+                                <span id="ctrl-speed-label" style={{ fontWeight: 700, textAlign: 'right' }}>{Math.min(globalSpeed, MANUAL_SPEED_LIMIT)}%</span>
                             </div>
-                            <div className="card">
-                                <div className="card-title">Jogging & Move to Target</div>
-                                <JogButtons joints={joints} tcp={tcp} ros={ros} />
+                            <div style={{ marginTop: 8, fontSize: '0.74rem', color: 'var(--warning)' }}>
+                                Manual jogging is safety-limited to a maximum of {MANUAL_SPEED_LIMIT}% in this panel.
                             </div>
                         </div>
 
-                        {/* Row 3: Log */}
+                        {/* Row 4: Log */}
                         <div className="card">
                             <div className="card-title">System Log</div>
                             <div className="log-entries" ref={logRef}>

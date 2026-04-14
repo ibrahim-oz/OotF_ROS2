@@ -114,7 +114,7 @@ html, body, #root {
   background: var(--bg-card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 22px;
+  padding: 16px;
 }
 
 .card-title {
@@ -123,41 +123,41 @@ html, body, #root {
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--text-2);
-  margin-bottom: 18px;
+  margin-bottom: 12px;
 }
 
 /* ── Joint Panel ────────────────────────────────────────────────── */
 .joints-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 14px;
+  gap: 10px;
 }
 
 .joint-item {
   background: var(--bg-card2);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 16px;
+  padding: 12px;
   transition: border-color 0.2s;
 }
 
 .joint-item:hover { border-color: var(--accent-glow); }
 
 .joint-label {
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   color: var(--text-2);
   font-weight: 500;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .joint-value {
-  font-size: 1.6rem;
+  font-size: 1.3rem;
   font-weight: 700;
   letter-spacing: -0.03em;
   color: var(--text-1);
   font-variant-numeric: tabular-nums;
   line-height: 1;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 
 .joint-value sup { font-size: 0.7rem; color: var(--text-2); font-weight: 400; vertical-align: super; margin-left: 2px; }
@@ -185,12 +185,12 @@ html, body, #root {
 
 .btn {
   width: 100%;
-  padding: 13px 20px;
+  padding: 10px 16px;
   border-radius: var(--radius-sm);
   border: none;
   cursor: pointer;
   font-family: var(--font);
-  font-size: 0.88rem;
+  font-size: 0.84rem;
   font-weight: 600;
   letter-spacing: 0.01em;
   transition: all 0.18s ease;
@@ -229,9 +229,9 @@ html, body, #root {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 0;
+  padding: 7px 0;
   border-bottom: 1px solid var(--border);
-  font-size: 0.83rem;
+  font-size: 0.78rem;
 }
 .info-row:last-child { border-bottom: none; }
 .info-row .label { color: var(--text-2); }

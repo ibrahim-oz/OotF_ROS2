@@ -5,7 +5,7 @@ import { ColladaLoader } from 'three/examples/jsm/loaders/ColladaLoader.js'
 import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as ROSLIB from 'roslib'
 
-const VIEWER_HEIGHT = 480
+const DEFAULT_VIEWER_HEIGHT = 480
 
 function stripPackageUrl(uri = '') {
     return uri.startsWith('package://') ? uri.slice('package://'.length) : uri
@@ -96,7 +96,7 @@ function createJointMarker() {
     )
 }
 
-export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
+export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHeight = DEFAULT_VIEWER_HEIGHT }) {
     const viewerRef = useRef(null)
     const effectRunIdRef = useRef(0)
     const currentTcpNameRef = useRef(currentTcpName)
@@ -166,8 +166,8 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             }
 
             const tcpName = currentTcpNameRef.current
-            const offsets = toolOffsetsRef.current?.[tcpName] ?? [0, 0, 120, 0, 0, 0]
-            const [xMm = 0, yMm = 0, zMm = 120, rxDeg = 0, ryDeg = 0, rzDeg = 0] = offsets
+            const offsets = toolOffsetsRef.current?.[tcpName] ?? [0, 0, 235, 0, 0, 0]
+            const [xMm = 0, yMm = 0, zMm = 235, rxDeg = 0, ryDeg = 0, rzDeg = 0] = offsets
             const rawTcpVector = new THREE.Vector3(xMm / 1000, yMm / 1000, zMm / 1000)
             const outwardAxis = new THREE.Vector3(0, 0, 1)
             const tcpVector =
@@ -261,7 +261,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
 
             camera = new THREE.PerspectiveCamera(
                 45,
-                (viewerRef.current.clientWidth || 400) / VIEWER_HEIGHT,
+                (viewerRef.current.clientWidth || 400) / viewerHeight,
                 0.01,
                 100,
             )
@@ -270,7 +270,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
 
             renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false })
             renderer.setPixelRatio(window.devicePixelRatio || 1)
-            renderer.setSize(viewerRef.current.clientWidth || 400, VIEWER_HEIGHT)
+            renderer.setSize(viewerRef.current.clientWidth || 400, viewerHeight)
             viewerRef.current.innerHTML = ''
             viewerRef.current.appendChild(renderer.domElement)
 
@@ -299,9 +299,9 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
             resizeObserver = new ResizeObserver(() => {
                 if (!viewerRef.current || !renderer || !camera) return
                 const width = viewerRef.current.clientWidth || 400
-                camera.aspect = width / VIEWER_HEIGHT
+                camera.aspect = width / viewerHeight
                 camera.updateProjectionMatrix()
-                renderer.setSize(width, VIEWER_HEIGHT)
+                renderer.setSize(width, viewerHeight)
             })
             resizeObserver.observe(viewerRef.current)
 
@@ -673,7 +673,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A' }) {
                 ref={viewerRef}
                 style={{
                     width: '100%',
-                    height: VIEWER_HEIGHT,
+                    height: viewerHeight,
                     background: '#060a14',
                     borderRadius: 8,
                     overflow: 'hidden',

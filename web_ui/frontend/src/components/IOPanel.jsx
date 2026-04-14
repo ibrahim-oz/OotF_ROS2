@@ -12,38 +12,36 @@ function Signal({ label, type, index, rawValue, onToggle, ros }) {
             background: 'var(--bg-card2)',
             border: `1px solid ${isOne ? '#10b98133' : 'var(--border)'}`,
             borderLeft: `4px solid ${isOne ? '#10b981' : unk ? 'var(--text-3)' : '#ef4444'}`,
-            borderRadius: 8, padding: '10px 12px',
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            borderRadius: 8, padding: '8px 10px',
+            display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
             gap: 8,
+            cursor: onToggle && ros && !unk ? 'pointer' : 'default',
         }}>
-            <div>
-                <div style={{ fontSize: '0.7rem', color: 'var(--text-3)', fontWeight: 600 }}>
-                    {type} {index}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                <div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-3)', fontWeight: 600 }}>
+                        {type} {index}
+                    </div>
+                    <div style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-1)' }}>{label}</div>
                 </div>
-                <div style={{ fontSize: '0.82rem', fontWeight: 500, color: 'var(--text-1)' }}>{label}</div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <div style={{
                     width: 10, height: 10, borderRadius: '50%',
                     background: unk ? '#4b5563' : isOne ? '#10b981' : '#ef4444',
                     boxShadow: isOne ? '0 0 6px #10b981' : 'none',
                     transition: 'all 0.2s',
                 }} />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
                 <span style={{
-                    fontSize: '0.8rem', fontWeight: 700, fontFamily: 'monospace',
+                    fontSize: '0.76rem', fontWeight: 700, fontFamily: 'monospace',
                     color: unk ? 'var(--text-3)' : isOne ? '#10b981' : '#ef4444'
                 }}>
                     {unk ? '?' : rawValue}
                 </span>
                 {onToggle && (
-                    <button
-                        className="btn btn-secondary"
-                        style={{ padding: '4px 12px', fontSize: '0.75rem', opacity: !ros ? 0.4 : 1 }}
-                        onClick={() => onToggle(index, rawValue === 1 ? 0 : 1)}
-                        disabled={!ros || unk}
-                    >
-                        → {rawValue === 1 ? 'TURN OFF' : 'TURN ON'}
-                    </button>
+                    <span style={{ fontSize: '0.66rem', color: 'var(--text-2)', opacity: !ros ? 0.4 : 1 }}>
+                        Tap to toggle
+                    </span>
                 )}
             </div>
         </div>
@@ -90,6 +88,15 @@ export default function IOPanel({ ros }) {
     }, [refresh])
 
     const toggle = async (idx1based, newRawValue) => {
+        const confirmed = window.confirm(
+            `Digital Output ${idx1based} will change to ${newRawValue === 1 ? 'ON' : 'OFF'}. Do you want to continue?`
+        )
+
+        if (!confirmed) {
+            setMsg(`⚠ DO${idx1based} change cancelled`)
+            return
+        }
+
         console.log(`[IO v4] DO${idx1based} → raw ${newRawValue}`)
 
         // OPTIMISTIC UPDATE: immediately show the new value in UI
@@ -118,9 +125,9 @@ export default function IOPanel({ ros }) {
     }
 
     return (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                <button className="btn btn-secondary" style={{ padding: '7px 18px' }} onClick={refresh} disabled={loading}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <button className="btn btn-secondary" style={{ width: 'auto', padding: '6px 14px' }} onClick={refresh} disabled={loading}>
                     {loading ? '⏳' : '🔄'} Refresh
                 </button>
                 {msg && <span style={{ fontSize: '0.82rem', color: msg.startsWith('✔') ? 'var(--success)' : 'var(--danger)' }}>{msg}</span>}
@@ -129,10 +136,10 @@ export default function IOPanel({ ros }) {
                 </span>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-                <div className="card">
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+                <div className="card" style={{ padding: '14px 16px' }}>
                     <div className="card-title">Digital Inputs (DI 1–16) — Read Only</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
                         {inputs.map((v, i) => (
                             <Signal key={i} label={`Digital Input ${i + 1}`} rawValue={v}
                                 type="DI" index={i + 1} ros={ros} />
@@ -140,12 +147,20 @@ export default function IOPanel({ ros }) {
                     </div>
                 </div>
 
-                <div className="card">
+                <div className="card" style={{ padding: '14px 16px' }}>
                     <div className="card-title">Digital Outputs (DO 1–16) — Read/Write</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 8 }}>
                         {outputs.map((v, i) => (
-                            <Signal key={i} label={`Digital Output ${i + 1}`} rawValue={v}
-                                type="DO" index={i + 1} onToggle={toggle} ros={ros} />
+                            <div
+                                key={i}
+                                onClick={() => {
+                                    if (!ros || v === -1) return
+                                    toggle(i + 1, v === 1 ? 0 : 1)
+                                }}
+                            >
+                                <Signal label={`Digital Output ${i + 1}`} rawValue={v}
+                                    type="DO" index={i + 1} onToggle={toggle} ros={ros} />
+                            </div>
                         ))}
                     </div>
                 </div>

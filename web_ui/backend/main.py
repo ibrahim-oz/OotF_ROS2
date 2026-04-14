@@ -12,7 +12,7 @@ Endpoints:
   POST /api/jog                  native single-axis jog (motion/jog)
   POST /api/jog/stop             stop jogging (speed=0)
   POST /api/move/joint           move to target joint angles
-  POST /api/move/tcp             move to target TCP (movel) + motion verification
+  POST /api/move/tcp             move to target TCP via movejointx
   GET  /api/tcp                  current tcp pose
   GET  /api/solution_space
   POST /api/tcp/set              set current tcp
@@ -902,10 +902,11 @@ class MoveJointxReq(BaseModel):
 
 class MoveTcpReq(BaseModel):
     pos: list[float]           # [X, Y, Z, Rx, Ry, Rz]
-    vel: float = 100.0         # linear speed
+    vel: float = 100.0
     acc: float = 200.0
     ref: int = 0               # 0=BASE
     sync_type: int = 0
+    sol: int = 2
 
 @app.post("/api/move/jointx")
 def api_move_jointx(b: MoveJointxReq):
@@ -946,24 +947,25 @@ def api_move_tcp(b: MoveTcpReq):
     if len(b.pos) != 6:
         return {"success": False, "error": "pos must contain 6 values [x,y,z,rx,ry,rz]"}
 
-    if not ros_node.c_move_l.wait_for_service(timeout_sec=1.0):
-        return {"success": False, "error": "/motion/move_line service is not available"}
+    if not ros_node.c_move_jx.wait_for_service(timeout_sec=1.0):
+        return {"success": False, "error": "/motion/move_jointx service is not available"}
 
     before_pose = _tcp_snapshot()
 
-    req = MoveLine.Request()
+    req = MoveJointx.Request()
     req.pos = [float(v) for v in b.pos]
-    req.vel = [float(b.vel), 30.0]
-    req.acc = [float(b.acc), 60.0]
+    req.vel = float(b.vel)
+    req.acc = float(b.acc)
     req.time = 0.0
     req.radius = 0.0
     req.ref = int(b.ref)
+    req.sol = int(b.sol)
     req.mode = 0
     req.blend_type = 0
     req.sync_type = int(b.sync_type)
 
     r = ros_node.call(
-        ros_node.c_move_l,
+        ros_node.c_move_jx,
         req,
         timeout=60.0 if b.sync_type == 0 else 5.0,
     )
@@ -971,7 +973,7 @@ def api_move_tcp(b: MoveTcpReq):
     if not r or not r.success:
         return {
             "success": False,
-            "error": "MoveLine service call failed or returned success=False",
+            "error": "MoveJointx service call failed or returned success=False",
         }
 
     # Real-motion verification
@@ -980,7 +982,7 @@ def api_move_tcp(b: MoveTcpReq):
         if not moved:
             return {
                 "success": False,
-                "error": "MoveLine was accepted but no real TCP motion was detected",
+                "error": "MoveJointx was accepted but no real TCP motion was detected",
                 "before": _safe_list(before_pose),
                 "after": _safe_list(started_pose),
                 "target": _safe_list(req.pos),
@@ -1432,8 +1434,8 @@ TOOLS_FILE = "tools.json"
 
 def _default_tool_offsets():
     return {
-        "tcp_gripper_A": [0, 0, 500, 0, 0, 0],
-        "tcp_gripper_B": [0, 0, 500, 0, 0, 0],
+        "tcp_gripper_A": [0, 0, 235, 0, 0, 0],
+        "tcp_gripper_B": [0, 0, 235, 0, 0, 0],
     }
 
 
@@ -1551,8 +1553,6 @@ def api_tool_set(b: ToolSetReq):
 def api_tool_offsets_get():
     offsets = load_tool_offsets()
     live = _get_live_tcp_offset()
-    if live and live.get("name"):
-        offsets[live["name"]] = live["offsets"]
     return {"success": True, "offsets": offsets, "live": live}
 
 

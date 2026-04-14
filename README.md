@@ -92,6 +92,65 @@ npm run dev
 
 The Web UI will be available at: `http://localhost:5173`
 
+### Start All Terminals Automatically
+If you want to launch the robot stack, backend, and frontend together and restart them easily, use the tmux helper:
+
+```bash
+sudo apt install -y tmux
+cd ~/doosan_ipc_production
+chmod +x scripts/manage_terminals.sh
+./scripts/manage_terminals.sh start
+```
+
+Useful commands:
+
+```bash
+./scripts/manage_terminals.sh restart
+./scripts/manage_terminals.sh status
+./scripts/manage_terminals.sh attach
+./scripts/manage_terminals.sh stop
+```
+
+### Auto-Mount Affix Image and DB Shares
+If `/mnt/affix_images`, `/mnt/affix_all_images`, or `/mnt/affix_db` appear empty after reboot, the SMB shares are probably not mounted yet.
+
+1. Create the local config file:
+```bash
+cd ~/doosan_ipc_production
+cp config/affix_mount.env.example config/affix_mount.env
+```
+
+2. Update `config/affix_mount.env` with the correct server, share names, and credentials.
+The verified results share format is:
+```bash
+AFFIX_SERVER=192.168.137.110
+AFFIX_RESULTS_SHARE=images
+AFFIX_ALL_IMAGES_SHARE=images_all
+AFFIX_DB_SHARE=db
+AFFIX_USERNAME=AFFIXENGINEERING242
+AFFIX_MOUNT_FLAGS=ro
+```
+
+3. Test the mounts manually:
+```bash
+chmod +x scripts/mount_affix_shares.sh
+./scripts/mount_affix_shares.sh mount
+./scripts/mount_affix_shares.sh status
+```
+
+4. If that works, install the systemd service:
+```bash
+sudo cp systemd/doosan-affix-mounts.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now doosan-affix-mounts.service
+```
+
+5. Check the service:
+```bash
+systemctl status doosan-affix-mounts.service
+mount | grep affix
+```
+
 ---
 
 ## 5. Troubleshooting Antigravity / Internet

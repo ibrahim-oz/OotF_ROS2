@@ -1,7 +1,7 @@
 T1: ros2
-cd ~/doosan_ipc_production/ipc_ws
-source install/setup.bash
-ros2 launch ipc_integration real_robot.launch.py
+    cd ~/doosan_ipc_production/ipc_ws
+    source install/setup.bash
+    ros2 launch ipc_integration real_robot.launch.py
 
 
 T2: webui be

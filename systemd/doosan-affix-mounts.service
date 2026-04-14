@@ -1,0 +1,14 @@
+[Unit]
+Description=Mount Affix SMB shares for Doosan IPC
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=AFFIX_MOUNT_ENV_FILE=/home/intern/doosan_ipc_production/config/affix_mount.env
+ExecStart=/home/intern/doosan_ipc_production/scripts/mount_affix_shares.sh mount
+ExecStop=/home/intern/doosan_ipc_production/scripts/mount_affix_shares.sh umount
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
