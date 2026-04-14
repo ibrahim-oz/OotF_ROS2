@@ -10,7 +10,7 @@ def tp_print(msg):
 
 # USER CODE BELOW
 # ──────────────────────────────────────────────────────────────────
-# Go to Pallet Scan Pos Program (Python ROS2 Node)
+# HOMING Program (Python ROS2 Node)
 # ──────────────────────────────────────────────────────────────────
 # This program moves the robot to the configured J01 position.
 # The `J01` variable is automatically injected dynamically 
@@ -21,15 +21,15 @@ import rclpy
 from rclpy.node import Node
 from dsr_msgs2.srv import MoveJoint
 
-class MainNode(Node):
+class HomingNode(Node):
     def __init__(self):
-        super().__init__('scan_node')
+        super().__init__('homing_node')
         self.movej_client = self.create_client(MoveJoint, '/motion/move_joint')
 
         while not self.movej_client.wait_for_service(timeout_sec=1.0):
             self.get_logger().info('Waiting for /motion/move_joint...')
 
-    def move_to_scan(self, target_pos):
+    def move_to_home(self, target_pos):
         req = MoveJoint.Request()
         req.pos = target_pos
         req.vel = 30.0
@@ -41,21 +41,21 @@ class MainNode(Node):
         future = self.movej_client.call_async(req)
         rclpy.spin_until_future_complete(self, future)
         if future.result() is not None and future.result().success:
-            self.get_logger().info('Movement successful.')
+            self.get_logger().info('Homing successful.')
         else:
-            self.get_logger().error('Movement failed.')
+            self.get_logger().error('Homing failed.')
 
 def main():
-    tp_print("Executing move to scan via ROS 2 services...")
+    tp_print("Executing HOMING via ROS 2 services...")
     
     # J01 is injected from the backend preamble
-    target = [float(j) for j in J02]
+    target = [float(j) for j in J01]
     tp_print(f"Target J01: {target}")
 
     rclpy.init()
-    node = MainNode()
+    node = HomingNode()
     try:
-        node.move_to_scan(target)
+        node.move_to_home(target)
     finally:
         node.destroy_node()
         rclpy.shutdown()

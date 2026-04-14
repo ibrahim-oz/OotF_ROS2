@@ -424,7 +424,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                 </div>
             </div>
 
-            <div className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+            <div className="card" style={{ minHeight: 0, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <div className="card-title" style={{ marginBottom: 0 }}>Operation Log</div>
                     <div style={{ display: 'flex', gap: 8 }}>
@@ -436,7 +436,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
                         </button>
                     </div>
                 </div>
-                <div ref={logRef} className="log-entries" style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-base)', padding: 12, borderRadius: 6, border: '1px solid var(--border)' }}>
+                <div ref={logRef} className="log-entries" style={{ flex: 1, minHeight: 0, overflowY: 'auto', background: 'var(--bg-base)', padding: 12, borderRadius: 6, border: '1px solid var(--border)' }}>
                     {log.length === 0 && <div className="log-entry">Waiting for operations...</div>}
                     {log.map((l, i) => (
                         <div key={i} className={`log-entry ${l.type}`}>

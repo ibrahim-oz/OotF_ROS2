@@ -57,6 +57,8 @@ from dsr_msgs2.srv import (
     MoveLine,
     MoveSplineJoint,
     Jog,
+    DrlPause,
+    DrlResume,
     DrlStart,
     DrlStop,
     GetDrlState,
@@ -347,6 +349,16 @@ def zyz_to_xyz(rx, ry, rz):
         return [rx, ry, rz]
 
 
+def xyz_to_zyz(rx, ry, rz):
+    try:
+        r = R.from_euler('xyz', [rx, ry, rz], degrees=True)
+        zyz = r.as_euler('zyz', degrees=True)
+        return zyz.tolist()
+    except Exception as e:
+        print(f"[XYZ→ZYZ ERROR] {e}")
+        return [rx, ry, rz]
+
+
 # ─── ROS Bridge ──────────────────────────────────────────────────
 
 class RosBridge(Node):
@@ -380,6 +392,8 @@ class RosBridge(Node):
         self.c_move_l = cli(MoveLine, "/motion/move_line")
         self.c_jog = cli(Jog, "/motion/jog")
         self.c_stop = cli(MoveStop, "/motion/move_stop")
+        self.c_drl_pause = cli(DrlPause, "/drl/drl_pause")
+        self.c_drl_resume = cli(DrlResume, "/drl/drl_resume")
         self.c_drl_start = cli(DrlStart, "/drl/drl_start")
         self.c_drl_stop = cli(DrlStop, "/drl/drl_stop")
         self.c_drl_state = cli(GetDrlState, "/drl/get_drl_state")
@@ -512,6 +526,12 @@ class RosBridge(Node):
         while not fut.done() and (time.time() - start) < timeout:
             time.sleep(0.01)
         return fut.result() if fut.done() else None
+
+    def dispatch(self, client, req):
+        if not client.wait_for_service(timeout_sec=0.2):
+            return False
+        client.call_async(req)
+        return True
 
 
 # ─── WebSocket ───────────────────────────────────────────────────
@@ -952,8 +972,11 @@ def api_move_tcp(b: MoveTcpReq):
 
     before_pose = _tcp_snapshot()
 
+    target_pos = [float(v) for v in b.pos]
+    target_pos[3:6] = xyz_to_zyz(target_pos[3], target_pos[4], target_pos[5])
+
     req = MoveJointx.Request()
-    req.pos = [float(v) for v in b.pos]
+    req.pos = target_pos
     req.vel = float(b.vel)
     req.acc = float(b.acc)
     req.time = 0.0
@@ -985,7 +1008,7 @@ def api_move_tcp(b: MoveTcpReq):
                 "error": "MoveJointx was accepted but no real TCP motion was detected",
                 "before": _safe_list(before_pose),
                 "after": _safe_list(started_pose),
-                "target": _safe_list(req.pos),
+                "target": _safe_list(b.pos),
             }
 
     # For sync mode, verify final target reach ONLY in BASE frame.
@@ -1010,7 +1033,7 @@ def api_move_tcp(b: MoveTcpReq):
                 "success": False,
                 "error": "Robot started moving but target TCP was not reached within timeout",
                 "final_pose": _safe_list(final_pose),
-                "target": _safe_list(req.pos),
+                "target": _safe_list(b.pos),
             }
 
     final_pose = _tcp_snapshot()
@@ -1021,7 +1044,7 @@ def api_move_tcp(b: MoveTcpReq):
 
     return {
         "success": True,
-        "target": _safe_list(req.pos),
+        "target": _safe_list(b.pos),
         "final_pose": _safe_list(_tcp_snapshot()),
     }
 
@@ -1379,13 +1402,23 @@ def api_prog_pause():
     global _prog_process, _prog_state
     if _prog_process and _prog_process.poll() is None:
         if ros_node:
-            req = MovePause.Request()
-            res = ros_node.call(ros_node.c_pause, req)
-            if not res or not getattr(res, "success", False):
-                return {"success": False, "error": "Robot pause command failed"}
+            pause_mode = None
+
+            drl_req = DrlPause.Request()
+            drl_res = ros_node.call(ros_node.c_drl_pause, drl_req)
+            if drl_res and getattr(drl_res, "success", False):
+                pause_mode = "drl"
+            else:
+                motion_req = MovePause.Request()
+                motion_sent = ros_node.dispatch(ros_node.c_pause, motion_req)
+                if motion_sent:
+                    pause_mode = "motion"
+                else:
+                    return {"success": False, "error": "Neither DRL pause nor motion pause succeeded"}
+
         _prog_process.send_signal(signal.SIGSTOP)
         _prog_state = 2
-        return {"success": True}
+        return {"success": True, "mode": pause_mode if ros_node else "process"}
     return {"success": False, "error": "Not running"}
 
 
@@ -1394,13 +1427,23 @@ def api_prog_resume():
     global _prog_process, _prog_state
     if _prog_process and _prog_process.poll() is None and _prog_state == 2:
         if ros_node:
-            req = MoveResume.Request()
-            res = ros_node.call(ros_node.c_resume, req)
-            if not res or not getattr(res, "success", False):
-                return {"success": False, "error": "Robot resume command failed"}
+            resume_mode = None
+
+            drl_req = DrlResume.Request()
+            drl_res = ros_node.call(ros_node.c_drl_resume, drl_req)
+            if drl_res and getattr(drl_res, "success", False):
+                resume_mode = "drl"
+            else:
+                motion_req = MoveResume.Request()
+                motion_sent = ros_node.dispatch(ros_node.c_resume, motion_req)
+                if motion_sent:
+                    resume_mode = "motion"
+                else:
+                    return {"success": False, "error": "Neither DRL resume nor motion resume succeeded"}
+
         _prog_process.send_signal(signal.SIGCONT)
         _prog_state = 1
-        return {"success": True}
+        return {"success": True, "mode": resume_mode if ros_node else "process"}
     return {"success": False, "error": "Not paused"}
 
 
