@@ -1376,11 +1376,13 @@ def tp_print(msg):
 def api_prog_pause():
     global _prog_process, _prog_state
     if _prog_process and _prog_process.poll() is None:
-        _prog_process.send_signal(signal.SIGSTOP)
-        _prog_state = 2
         if ros_node:
             req = MovePause.Request()
-            ros_node.call(ros_node.c_pause, req)
+            res = ros_node.call(ros_node.c_pause, req)
+            if not res or not getattr(res, "success", False):
+                return {"success": False, "error": "Robot pause command failed"}
+        _prog_process.send_signal(signal.SIGSTOP)
+        _prog_state = 2
         return {"success": True}
     return {"success": False, "error": "Not running"}
 
@@ -1391,7 +1393,9 @@ def api_prog_resume():
     if _prog_process and _prog_process.poll() is None and _prog_state == 2:
         if ros_node:
             req = MoveResume.Request()
-            ros_node.call(ros_node.c_resume, req)
+            res = ros_node.call(ros_node.c_resume, req)
+            if not res or not getattr(res, "success", False):
+                return {"success": False, "error": "Robot resume command failed"}
         _prog_process.send_signal(signal.SIGCONT)
         _prog_state = 1
         return {"success": True}

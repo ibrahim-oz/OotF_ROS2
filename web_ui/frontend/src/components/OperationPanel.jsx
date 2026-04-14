@@ -159,7 +159,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
             const r = await fetch('/api/program/pause', { method: 'POST' })
             const d = await r.json()
             if (d.success) { setPaused(true); setDrlState(2); addLog('⚠ Paused.', 'warning') }
-            else addLog('✘ Pause failed.', 'error')
+            else addLog(`✘ Pause failed: ${d.error || 'unknown error'}`, 'error')
         } catch { addLog('✘ Pause API error.', 'error') }
     }
 
@@ -168,7 +168,7 @@ export default function OperationPanel({ ros, speed, setSpeed, joints, tcp, curr
             const r = await fetch('/api/program/resume', { method: 'POST' })
             const d = await r.json()
             if (d.success) { setPaused(false); setDrlState(1); addLog('▶ Resumed.', 'success') }
-            else addLog('✘ Resume failed.', 'error')
+            else addLog(`✘ Resume failed: ${d.error || 'unknown error'}`, 'error')
         } catch { addLog('✘ Resume API error.', 'error') }
     }
 
