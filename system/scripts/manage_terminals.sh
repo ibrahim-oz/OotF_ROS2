@@ -3,7 +3,7 @@
 set -euo pipefail
 
 SESSION_NAME="doosan_ipc"
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 
 T1_CMD="cd \"$PROJECT_ROOT/ipc_ws\" && source /opt/ros/humble/setup.bash && source install/setup.bash && ros2 launch ipc_integration real_robot.launch.py"
 T2_CMD="cd \"$PROJECT_ROOT/web_ui/backend\" && source /opt/ros/humble/setup.bash && source /home/intern/ros2_ws/install/setup.bash && source \"$PROJECT_ROOT/ipc_ws/install/setup.bash\" && if [ -f venv/bin/activate ]; then source venv/bin/activate; fi && python3 main.py"

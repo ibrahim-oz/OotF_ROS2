@@ -3,11 +3,12 @@
 # launch.sh — Top-level launcher for the ootf_ros2 pipeline.
 #
 # Usage:
-#   bash launch/launch.sh virtual   # TCP bridge + Isaac Sim
-#   bash launch/launch.sh real      # TCP bridge + Doosan joint service client
+#   bash sim/launch/launch.sh virtual   # TCP bridge + Isaac Sim
+#   bash sim/launch/launch.sh real      # TCP bridge + Doosan joint service client
 # =============================================================================
 
 LAUNCH_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPTS_DIR="$(cd "$LAUNCH_DIR/../../ipc_ws/src/ipc_integration/scripts" && pwd)"
 
 MODE=$1
 
@@ -20,16 +21,24 @@ fi
 case "$MODE" in
     virtual)
         echo "=== Starting in VIRTUAL mode (Isaac Sim) ==="
-        bash "$LAUNCH_DIR/launch_bridge.sh" &
-        PID_BRIDGE=$!
         bash "$LAUNCH_DIR/launch_isaacsim.sh" &
         PID_SECOND=$!
+
+        echo "Waiting for Isaac Sim ROS2 node to come online..."
+        source "/opt/ros/$(ls /opt/ros/ | head -1)/setup.bash" 2>/dev/null
+        until ros2 node list 2>/dev/null | grep -q "h2017_ros_node"; do
+            sleep 2
+        done
+        echo "Isaac Sim ready. Starting TCP bridge..."
+
+        bash "$SCRIPTS_DIR/launch_bridge.sh" &
+        PID_BRIDGE=$!
         ;;
     real)
         echo "=== Starting in REAL mode (Doosan robot) ==="
-        bash "$LAUNCH_DIR/launch_bridge.sh" &
+        bash "$SCRIPTS_DIR/launch_bridge.sh" &
         PID_BRIDGE=$!
-        bash "$LAUNCH_DIR/launch_joint_client.sh" &
+        bash "$SCRIPTS_DIR/launch_joint_client.sh" &
         PID_SECOND=$!
         ;;
     *)

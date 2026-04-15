@@ -2,12 +2,12 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${AFFIX_MOUNT_ENV_FILE:-$PROJECT_ROOT/config/affix_mount.env}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ENV_FILE="${AFFIX_MOUNT_ENV_FILE:-$PROJECT_ROOT/system/config/affix_mount.env}"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   echo "[ERROR] Mount environment file was not found: $ENV_FILE"
-  echo "[INFO] Copy config/affix_mount.env.example to config/affix_mount.env and fill in the values."
+  echo "[INFO] Copy system/config/affix_mount.env.example to system/config/affix_mount.env and fill in the values."
   exit 1
 fi
 
