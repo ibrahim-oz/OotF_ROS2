@@ -8,8 +8,10 @@ import OperationPanel from './components/OperationPanel.jsx'
 import ResultsPanel from './components/ResultsPanel.jsx'
 import VisionDbPanel from './components/VisionDbPanel.jsx'
 import AllImagesPanel from './components/AllImagesPanel.jsx'
+import MoveItPanel from './components/MoveItPanel.jsx'
 
 // ─── Constants ───────────────────────────────────────────────────
+const ENABLE_MOVEIT_TEST_PANEL = true
 const JOINT_NAMES = ['J1', 'J2', 'J3', 'J4', 'J5', 'J6']
 const JOG_JOINT_AXES = [0, 1, 2, 3, 4, 5]     // jog_axis values for joints
 const JOG_CART_AXES = [6, 7, 8, 9, 10, 11]   // Tx,Ty,Tz,Rx,Ry,Rz
@@ -338,11 +340,12 @@ const TABS = [
     { id: 'io', label: 'I/O' },
     { id: 'variables', label: 'Variables' },
     { id: 'program', label: 'Program' },
+    ENABLE_MOVEIT_TEST_PANEL ? { id: 'moveit-test', label: 'MoveIt Test' } : null,
     { id: 'vision', label: 'Vision TCP' },
     { id: 'vision-db', label: 'Vision DB' },
     { id: 'results', label: 'Results' },
     { id: 'all-images', label: 'All Images' },
-]
+].filter(Boolean)
 
 export default function App() {
     const [authChecked, setAuthChecked] = useState(false)
@@ -604,7 +607,7 @@ export default function App() {
             </div>
 
             {/* Content */}
-            <div style={{ flex: 1, padding: '10px 18px', maxWidth: (tab === 'control' || tab === 'operation' || tab === 'program' || tab === 'all-images' || tab === 'results' || tab === 'vision-db') ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
+            <div style={{ flex: 1, padding: '10px 18px', maxWidth: (tab === 'control' || tab === 'operation' || tab === 'program' || tab === 'moveit-test' || tab === 'all-images' || tab === 'results' || tab === 'vision-db') ? '100%' : 1400, margin: '0 auto', width: '100%', overflow: 'auto' }}>
 
                 {/* ── CONTROL TAB ── */}
                 {tab === 'control' && (
@@ -679,6 +682,9 @@ export default function App() {
                     <div style={{ height: 'calc(100vh - 132px)', overflow: 'hidden' }}>
                         <OperationPanel ros={ros} speed={globalSpeed} setSpeed={setGlobalSpeed} joints={joints} tcp={tcp} currentTool={currentTool} currentTcpName={currentTcpName} programLogs={programLogs} />
                     </div>
+                )}
+                {ENABLE_MOVEIT_TEST_PANEL && tab === 'moveit-test' && (
+                    <MoveItPanel joints={joints} tcp={tcp} currentTcpName={currentTcpName} />
                 )}
                 {tab === 'io' && <IOPanel ros={ros} />}
                 {tab === 'variables' && <VariablesPanel />}

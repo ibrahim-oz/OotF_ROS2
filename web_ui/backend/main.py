@@ -46,6 +46,11 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from sensor_msgs.msg import JointState
 from dsr_msgs2.msg import RobotStateRt
+from builtin_interfaces.msg import Duration
+from geometry_msgs.msg import Pose, PoseStamped
+from moveit_msgs.msg import BoundingVolume, Constraints, JointConstraint, MotionPlanRequest, OrientationConstraint, PositionConstraint, RobotState
+from moveit_msgs.srv import GetMotionPlan, GetPositionIK
+from shape_msgs.msg import SolidPrimitive
 
 from dsr_msgs2.srv import (
     GetCurrentPosx,
@@ -408,6 +413,8 @@ class RosBridge(Node):
         self.c_set_ref = cli(SetRefCoord, "/motion/set_ref_coord")
         self.c_get_tool = cli(GetCurrentTool, "/tool/get_current_tool")
         self.c_get_tcp = cli(GetCurrentTcp, "/tcp/get_current_tcp")
+        self.c_moveit_plan = cli(GetMotionPlan, "/plan_kinematic_path")
+        self.c_moveit_ik = cli(GetPositionIK, "/compute_ik")
 
         self.get_logger().info("Web bridge ready.")
 
@@ -841,6 +848,526 @@ class MoveJointReq(BaseModel):
     vel: float = 30.0
     acc: float = 60.0
     sync_type: int = 0  # 0=SYNC, 1=ASYNC
+
+
+class MoveItJointPlanReq(BaseModel):
+    pos: list[float]
+    group_name: str = "manipulator"
+    pipeline_id: str = ""
+    planner_id: str = ""
+    num_planning_attempts: int = 1
+    allowed_planning_time: float = 3.0
+    max_velocity_scaling_factor: float = 0.25
+    max_acceleration_scaling_factor: float = 0.25
+
+
+class MoveItPosePlanReq(BaseModel):
+    pos: list[float]  # [x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg]
+    group_name: str = "manipulator"
+    pipeline_id: str = "pilz_industrial_motion_planner"
+    planner_id: str = "LIN"
+    tip_link: str = "tcp_gripper_A"
+    frame_id: str = "base_link"
+    position_tolerance_mm: float = 5.0
+    orientation_tolerance_deg: float = 5.0
+    allowed_planning_time: float = 3.0
+    num_planning_attempts: int = 1
+    max_velocity_scaling_factor: float = 0.25
+    max_acceleration_scaling_factor: float = 0.25
+
+
+_moveit_last_plan = None
+_MOVEIT_ERROR_NAMES = {
+    1: "SUCCESS",
+    99999: "FAILURE",
+    -1: "PLANNING_FAILED",
+    -2: "INVALID_MOTION_PLAN",
+    -3: "MOTION_PLAN_INVALIDATED_BY_ENVIRONMENT_CHANGE",
+    -4: "CONTROL_FAILED",
+    -5: "UNABLE_TO_AQUIRE_SENSOR_DATA",
+    -6: "TIMED_OUT",
+    -7: "PREEMPTED",
+    -10: "START_STATE_IN_COLLISION",
+    -11: "START_STATE_VIOLATES_PATH_CONSTRAINTS",
+    -12: "GOAL_IN_COLLISION",
+    -13: "GOAL_VIOLATES_PATH_CONSTRAINTS",
+    -14: "GOAL_CONSTRAINTS_VIOLATED",
+    -15: "INVALID_GROUP_NAME",
+    -16: "INVALID_GOAL_CONSTRAINTS",
+    -17: "INVALID_ROBOT_STATE",
+    -18: "INVALID_LINK_NAME",
+    -21: "FRAME_TRANSFORM_FAILURE",
+    -23: "ROBOT_STATE_STALE",
+    -26: "START_STATE_INVALID",
+    -27: "GOAL_STATE_INVALID",
+    -28: "UNRECOGNIZED_GOAL_TYPE",
+    -31: "NO_IK_SOLUTION",
+}
+
+
+def _moveit_service_ready() -> bool:
+    return bool(ros_node and ros_node.c_moveit_plan.service_is_ready())
+
+
+def _moveit_error_name(code: int) -> str:
+    return _MOVEIT_ERROR_NAMES.get(int(code), "UNKNOWN")
+
+
+def _build_moveit_start_state() -> RobotState:
+    start_state = RobotState()
+    start_state.joint_state = JointState()
+
+    if latest_joint:
+        filtered = [
+            (name, pos)
+            for name, pos in zip(
+                list(latest_joint.get("names", [])),
+                list(latest_joint.get("positions_rad", [])),
+            )
+            if name in {f"joint_{idx}" for idx in range(1, 7)}
+        ]
+        start_state.joint_state.name = [name for name, _ in filtered]
+        start_state.joint_state.position = [pos for _, pos in filtered]
+
+    return start_state
+
+
+def _sample_moveit_preview(joint_names, points):
+    if not joint_names or not points:
+        return []
+
+    sample_count = min(4, len(points))
+    if sample_count <= 0:
+        return []
+
+    indexes = []
+    for i in range(sample_count):
+        if sample_count == 1:
+            idx = len(points) - 1
+        else:
+            idx = round(i * (len(points) - 1) / (sample_count - 1))
+        if idx not in indexes:
+            indexes.append(idx)
+
+    preview = []
+    for seq, idx in enumerate(indexes, start=1):
+        pt = points[idx]
+        sec = int(getattr(getattr(pt, "time_from_start", None), "sec", 0))
+        nsec = int(getattr(getattr(pt, "time_from_start", None), "nanosec", 0))
+        preview.append({
+            "label": f"Waypoint {seq}",
+            "jointNames": list(joint_names),
+            "positions": list(pt.positions),
+            "time_from_start_s": sec + (nsec / 1e9),
+        })
+    return preview
+
+
+def _preview_from_joint_target_map(joint_targets_rad: dict[str, float]):
+    current_joint_map = {}
+    if latest_joint:
+        current_joint_map = {
+            name: pos
+            for name, pos in zip(
+                list(latest_joint.get("names", [])),
+                list(latest_joint.get("positions_rad", [])),
+            )
+            if name.startswith("joint_")
+        }
+
+    ordered_names = [f"joint_{idx}" for idx in range(1, 7)]
+    samples = [0.2, 0.45, 0.7, 1.0]
+    preview = []
+    for seq, t in enumerate(samples, start=1):
+        positions = []
+        for name in ordered_names:
+            start = float(current_joint_map.get(name, 0.0))
+            target = float(joint_targets_rad.get(name, start))
+            positions.append(start + ((target - start) * t))
+        preview.append({
+            "label": f"IK Waypoint {seq}",
+            "jointNames": ordered_names,
+            "positions": positions,
+            "time_from_start_s": float(seq),
+        })
+    return preview
+
+
+def _build_moveit_common_request(group_name, pipeline_id, planner_id, planning_time, attempts, vel_scale, acc_scale):
+    req = GetMotionPlan.Request()
+    req.motion_plan_request = MotionPlanRequest()
+    req.motion_plan_request.group_name = group_name
+    req.motion_plan_request.pipeline_id = pipeline_id
+    req.motion_plan_request.planner_id = planner_id
+    req.motion_plan_request.num_planning_attempts = max(1, int(attempts))
+    req.motion_plan_request.allowed_planning_time = max(0.5, float(planning_time))
+    req.motion_plan_request.max_velocity_scaling_factor = max(0.01, min(1.0, float(vel_scale)))
+    req.motion_plan_request.max_acceleration_scaling_factor = max(0.01, min(1.0, float(acc_scale)))
+    req.motion_plan_request.start_state = _build_moveit_start_state()
+    return req
+
+
+def _extract_moveit_plan_result(res):
+    global _moveit_last_plan
+    if not res:
+        return {"success": False, "error": "MoveIt planning request timed out or failed"}
+
+    motion_res = res.motion_plan_response
+    error_code = int(getattr(getattr(motion_res, "error_code", None), "val", 0))
+    trajectory = motion_res.trajectory.joint_trajectory
+    joint_names = list(getattr(trajectory, "joint_names", []))
+    points = list(getattr(trajectory, "points", []))
+
+    success = error_code == 1 and bool(joint_names) and bool(points)
+    if not success:
+        _moveit_last_plan = None
+        return {
+            "success": False,
+            "error": "MoveIt could not produce a valid joint trajectory",
+            "error_code": error_code,
+            "error_name": _moveit_error_name(error_code),
+        }
+
+    preview = _sample_moveit_preview(joint_names, points)
+    _moveit_last_plan = {
+        "joint_names": joint_names,
+        "preview_waypoints": preview,
+        "point_count": len(points),
+        "error_code": error_code,
+    }
+    return {
+        "success": True,
+        "joint_names": joint_names,
+        "point_count": len(points),
+        "preview_waypoints": preview,
+    }
+
+
+def _build_joint_goal_constraints_from_map(joint_targets_rad: dict[str, float]) -> list[Constraints]:
+    goal = Constraints()
+    goal.joint_constraints = []
+    for joint_name in [f"joint_{idx}" for idx in range(1, 7)]:
+        if joint_name not in joint_targets_rad:
+            continue
+        jc = JointConstraint()
+        jc.joint_name = joint_name
+        jc.position = float(joint_targets_rad[joint_name])
+        jc.tolerance_above = 0.001
+        jc.tolerance_below = 0.001
+        jc.weight = 1.0
+        goal.joint_constraints.append(jc)
+    return [goal]
+
+
+def _compute_moveit_ik_joint_map(group_name, frame_id, tip_link, pose_xyz_deg):
+    if not ros_node or not ros_node.c_moveit_ik.wait_for_service(timeout_sec=1.0):
+        return None, {
+            "success": False,
+            "error": "MoveIt IK service /compute_ik is not available",
+            "error_code": -25,
+            "error_name": "COMMUNICATION_FAILURE",
+        }
+
+    x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg = pose_xyz_deg
+    qx, qy, qz, qw = R.from_euler("xyz", [rx_deg, ry_deg, rz_deg], degrees=True).as_quat()
+
+    ik_req = GetPositionIK.Request()
+    ik_req.ik_request.group_name = group_name
+    ik_req.ik_request.robot_state = _build_moveit_start_state()
+    ik_req.ik_request.avoid_collisions = False
+    ik_req.ik_request.ik_link_name = tip_link
+    ik_req.ik_request.pose_stamped = PoseStamped()
+    ik_req.ik_request.pose_stamped.header.frame_id = frame_id
+    ik_req.ik_request.pose_stamped.pose = Pose()
+    ik_req.ik_request.pose_stamped.pose.position.x = x_mm / 1000.0
+    ik_req.ik_request.pose_stamped.pose.position.y = y_mm / 1000.0
+    ik_req.ik_request.pose_stamped.pose.position.z = z_mm / 1000.0
+    ik_req.ik_request.pose_stamped.pose.orientation.x = float(qx)
+    ik_req.ik_request.pose_stamped.pose.orientation.y = float(qy)
+    ik_req.ik_request.pose_stamped.pose.orientation.z = float(qz)
+    ik_req.ik_request.pose_stamped.pose.orientation.w = float(qw)
+    ik_req.ik_request.timeout = Duration(sec=1, nanosec=0)
+
+    ik_res = ros_node.call(ros_node.c_moveit_ik, ik_req, timeout=3.0)
+    ik_code = int(getattr(getattr(ik_res, "error_code", None), "val", 0)) if ik_res else 0
+    if not ik_res or ik_code != 1:
+        return None, {
+            "success": False,
+            "error": "MoveIt IK could not solve the requested cartesian pose",
+            "error_code": ik_code,
+            "error_name": _moveit_error_name(ik_code),
+        }
+
+    joint_map = {
+        name: pos
+        for name, pos in zip(
+            list(ik_res.solution.joint_state.name),
+            list(ik_res.solution.joint_state.position),
+        )
+        if name.startswith("joint_")
+    }
+    if len(joint_map) < 6:
+        return None, {
+            "success": False,
+            "error": "MoveIt IK returned an incomplete joint solution",
+            "error_code": -31,
+            "error_name": "NO_IK_SOLUTION",
+        }
+
+    return joint_map, None
+
+
+def _compute_moveit_ik_with_candidates(group_name, frame_id, candidates):
+    attempts = []
+    for candidate in candidates:
+        tip_link = candidate["tip_link"]
+        pose_xyz_deg = candidate["pose"]
+        joint_map, error = _compute_moveit_ik_joint_map(group_name, frame_id, tip_link, pose_xyz_deg)
+        attempts.append({
+            "tip_link": tip_link,
+            "pose": pose_xyz_deg,
+            "success": error is None,
+            "error_code": None if error is None else error.get("error_code"),
+            "error_name": None if error is None else error.get("error_name"),
+        })
+        if error is None:
+            return joint_map, attempts, None
+
+    last = attempts[-1] if attempts else {}
+    return None, attempts, {
+        "success": False,
+        "error": "MoveIt IK could not solve the requested cartesian pose",
+        "error_code": last.get("error_code", -31),
+        "error_name": last.get("error_name", "NO_IK_SOLUTION"),
+    }
+
+
+@app.get("/api/moveit/status")
+def api_moveit_status():
+    return {
+        "success": True,
+        "enabled": True,
+        "ros_connected": ros_connected,
+        "moveit_service_ready": _moveit_service_ready(),
+        "latest_joint_available": bool(latest_joint),
+        "has_plan": bool(_moveit_last_plan),
+    }
+
+
+@app.post("/api/moveit/clear")
+def api_moveit_clear():
+    global _moveit_last_plan
+    _moveit_last_plan = None
+    return {"success": True}
+
+
+@app.post("/api/moveit/plan/joint")
+def api_moveit_plan_joint(b: MoveItJointPlanReq):
+    if not ros_node:
+        return {"success": False, "error": "ros_node is not ready"}
+
+    if len(b.pos) != 6:
+        return {"success": False, "error": "pos must contain 6 joint values"}
+
+    if not latest_joint:
+        return {"success": False, "error": "Live joint state is not available yet"}
+
+    if not ros_node.c_moveit_plan.wait_for_service(timeout_sec=1.0):
+        return {"success": False, "error": "MoveIt planning service /plan_kinematic_path is not available"}
+
+    req = _build_moveit_common_request(
+        b.group_name,
+        b.pipeline_id,
+        b.planner_id,
+        b.allowed_planning_time,
+        b.num_planning_attempts,
+        b.max_velocity_scaling_factor,
+        b.max_acceleration_scaling_factor,
+    )
+
+    req.motion_plan_request.goal_constraints = _build_joint_goal_constraints_from_map({
+        f"joint_{idx}": math.radians(float(pos))
+        for idx, pos in enumerate(b.pos, start=1)
+    })
+
+    res = ros_node.call(ros_node.c_moveit_plan, req, timeout=max(5.0, req.motion_plan_request.allowed_planning_time + 2.0))
+    result = _extract_moveit_plan_result(res)
+    if not result.get("success"):
+        return result
+
+    return {
+        **result,
+        "group_name": b.group_name,
+        "planner_id": b.planner_id,
+    }
+
+
+@app.post("/api/moveit/plan/pose")
+def api_moveit_plan_pose(b: MoveItPosePlanReq):
+    global _moveit_last_plan
+    if not ros_node:
+        return {"success": False, "error": "ros_node is not ready"}
+
+    if len(b.pos) != 6:
+        return {"success": False, "error": "pos must contain 6 pose values [x,y,z,rx,ry,rz]"}
+
+    if not latest_joint:
+        return {"success": False, "error": "Live joint state is not available yet"}
+
+    if not ros_node.c_moveit_plan.wait_for_service(timeout_sec=1.0):
+        return {"success": False, "error": "MoveIt planning service /plan_kinematic_path is not available"}
+
+    req = _build_moveit_common_request(
+        b.group_name,
+        b.pipeline_id,
+        b.planner_id,
+        b.allowed_planning_time,
+        b.num_planning_attempts,
+        b.max_velocity_scaling_factor,
+        b.max_acceleration_scaling_factor,
+    )
+
+    resolved_pose, resolved_tip_link, used_tip_conversion = _resolve_moveit_tip_target(
+        [float(v) for v in b.pos],
+        b.tip_link,
+    )
+    x_mm, y_mm, z_mm, rx_deg, ry_deg, rz_deg = resolved_pose
+    qx, qy, qz, qw = R.from_euler("xyz", [rx_deg, ry_deg, rz_deg], degrees=True).as_quat()
+
+    pos_constraint = PositionConstraint()
+    pos_constraint.header.frame_id = b.frame_id
+    pos_constraint.link_name = resolved_tip_link
+    pos_constraint.weight = 1.0
+
+    region = BoundingVolume()
+    primitive = SolidPrimitive()
+    primitive.type = SolidPrimitive.BOX
+    tol_m = max(0.0005, float(b.position_tolerance_mm) / 1000.0)
+    primitive.dimensions = [tol_m * 2.0, tol_m * 2.0, tol_m * 2.0]
+    region.primitives = [primitive]
+
+    primitive_pose = Pose()
+    primitive_pose.position.x = x_mm / 1000.0
+    primitive_pose.position.y = y_mm / 1000.0
+    primitive_pose.position.z = z_mm / 1000.0
+    primitive_pose.orientation.w = 1.0
+    region.primitive_poses = [primitive_pose]
+    pos_constraint.constraint_region = region
+
+    orient_constraint = OrientationConstraint()
+    orient_constraint.header.frame_id = b.frame_id
+    orient_constraint.link_name = resolved_tip_link
+    orient_constraint.orientation.x = float(qx)
+    orient_constraint.orientation.y = float(qy)
+    orient_constraint.orientation.z = float(qz)
+    orient_constraint.orientation.w = float(qw)
+    tol_rad = max(math.radians(0.25), math.radians(float(b.orientation_tolerance_deg)))
+    orient_constraint.absolute_x_axis_tolerance = tol_rad
+    orient_constraint.absolute_y_axis_tolerance = tol_rad
+    orient_constraint.absolute_z_axis_tolerance = tol_rad
+    orient_constraint.weight = 1.0
+
+    goal = Constraints()
+    goal.position_constraints = [pos_constraint]
+    goal.orientation_constraints = [orient_constraint]
+    req.motion_plan_request.goal_constraints = [goal]
+
+    pose_res = ros_node.call(
+        ros_node.c_moveit_plan,
+        req,
+        timeout=max(5.0, req.motion_plan_request.allowed_planning_time + 2.0),
+    )
+    pose_result = _extract_moveit_plan_result(pose_res)
+    if pose_result.get("success"):
+        return {
+            **pose_result,
+            "group_name": b.group_name,
+            "pipeline_id": b.pipeline_id,
+            "planner_id": b.planner_id,
+            "tip_link": b.tip_link,
+            "resolved_tip_link": resolved_tip_link,
+            "frame_id": b.frame_id,
+            "used_tip_conversion": used_tip_conversion,
+            "fallback": "pose_primary",
+            "ik_attempts": [],
+        }
+
+    ik_candidates = [{
+        "tip_link": resolved_tip_link,
+        "pose": resolved_pose,
+    }]
+
+    ik_joint_map, ik_attempts, ik_error = _compute_moveit_ik_with_candidates(
+        b.group_name,
+        b.frame_id,
+        ik_candidates,
+    )
+    if ik_error:
+        ik_error["tip_link"] = b.tip_link
+        ik_error["resolved_tip_link"] = resolved_tip_link
+        ik_error["used_tip_conversion"] = used_tip_conversion
+        ik_error["ik_attempts"] = ik_attempts
+        return ik_error
+
+    joint_req = _build_moveit_common_request(
+        b.group_name,
+        "",
+        "",
+        b.allowed_planning_time,
+        b.num_planning_attempts,
+        b.max_velocity_scaling_factor,
+        b.max_acceleration_scaling_factor,
+    )
+    joint_req.motion_plan_request.goal_constraints = _build_joint_goal_constraints_from_map(ik_joint_map)
+    res = ros_node.call(ros_node.c_moveit_plan, joint_req, timeout=max(5.0, joint_req.motion_plan_request.allowed_planning_time + 2.0))
+    result = _extract_moveit_plan_result(res)
+    if not result.get("success"):
+        ik_preview = _preview_from_joint_target_map(ik_joint_map)
+        if ik_preview:
+            _moveit_last_plan = {
+                "joint_names": [f"joint_{idx}" for idx in range(1, 7)],
+                "preview_waypoints": ik_preview,
+                "point_count": len(ik_preview),
+                "error_code": result.get("error_code", 0),
+                "fallback": "ik_preview_only",
+            }
+            return {
+                "success": True,
+                "group_name": b.group_name,
+                "pipeline_id": b.pipeline_id,
+                "planner_id": b.planner_id,
+                "tip_link": b.tip_link,
+                "resolved_tip_link": resolved_tip_link,
+                "frame_id": b.frame_id,
+                "used_tip_conversion": used_tip_conversion,
+                "fallback": "ik_preview_only",
+                "ik_attempts": ik_attempts,
+                "point_count": len(ik_preview),
+                "joint_names": [f"joint_{idx}" for idx in range(1, 7)],
+                "preview_waypoints": ik_preview,
+                "warning": f'Joint trajectory planning failed after IK, using preview-only fallback [{result.get("error_name", "UNKNOWN")}]',
+            }
+
+        result["error"] = f'{result.get("error", "MoveIt joint planning after IK failed")} [{result.get("error_name", "UNKNOWN")}]'
+        result["tip_link"] = b.tip_link
+        result["resolved_tip_link"] = resolved_tip_link
+        result["used_tip_conversion"] = used_tip_conversion
+        result["fallback"] = "ik_primary"
+        result["ik_attempts"] = ik_attempts
+        return result
+
+    return {
+        **result,
+        "group_name": b.group_name,
+        "pipeline_id": b.pipeline_id,
+        "planner_id": b.planner_id,
+        "tip_link": b.tip_link,
+        "resolved_tip_link": resolved_tip_link,
+        "frame_id": b.frame_id,
+        "used_tip_conversion": used_tip_conversion,
+        "fallback": "ik_primary",
+        "ik_attempts": ik_attempts,
+    }
 
 
 @app.post("/api/move/joint")
@@ -1487,6 +2014,45 @@ def _pose_xyz_deg_to_matrix(pos):
     transform[:3, 3] = np.array(pos[:3], dtype=float)
     transform[:3, :3] = R.from_euler("xyz", pos[3:], degrees=True).as_matrix()
     return transform
+
+
+def _matrix_to_pose_xyz_deg(transform):
+    rpy = R.from_matrix(transform[:3, :3]).as_euler("xyz", degrees=True)
+    xyz = transform[:3, 3]
+    return [
+        float(xyz[0]),
+        float(xyz[1]),
+        float(xyz[2]),
+        float(rpy[0]),
+        float(rpy[1]),
+        float(rpy[2]),
+    ]
+
+
+def _resolve_moveit_tip_target(pos, tip_link):
+    tool_offsets = load_tool_offsets()
+    moveit_links = {"link_6"}
+
+    if tip_link in moveit_links:
+        return list(pos), tip_link, False
+
+    tcp_offset = tool_offsets.get(tip_link)
+    if (not tcp_offset or len(tcp_offset) != 6):
+        live_offset = _get_live_tcp_offset()
+        if live_offset and live_offset.get("name") == tip_link:
+            tcp_offset = live_offset.get("offsets")
+    if (not tcp_offset or len(tcp_offset) != 6):
+        tip_lower = str(tip_link or "").strip().lower()
+        if "smc" in tip_lower:
+            tcp_offset = [0, 0, 235, 0, 0, 0]
+
+    if not tcp_offset or len(tcp_offset) != 6:
+        return list(pos), tip_link, False
+
+    tcp_target = _pose_xyz_deg_to_matrix(pos)
+    tool_transform = _pose_xyz_deg_to_matrix(tcp_offset)
+    flange_target = tcp_target @ np.linalg.inv(tool_transform)
+    return _matrix_to_pose_xyz_deg(flange_target), "link_6", True
 
 
 def _get_live_tcp_offset():

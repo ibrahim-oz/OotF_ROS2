@@ -6,6 +6,7 @@ import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js'
 import * as ROSLIB from 'roslib'
 
 const DEFAULT_VIEWER_HEIGHT = 480
+const PLAN_COLORS = ['#60a5fa', '#22c55e', '#f59e0b', '#ef4444']
 
 function stripPackageUrl(uri = '') {
     return uri.startsWith('package://') ? uri.slice('package://'.length) : uri
@@ -96,11 +97,35 @@ function createJointMarker() {
     )
 }
 
-export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHeight = DEFAULT_VIEWER_HEIGHT }) {
+function createPlanWaypoint(position, colorHex, index) {
+    const marker = new THREE.Mesh(
+        new THREE.SphereGeometry(index === 0 ? 0.028 : 0.02, 18, 18),
+        new THREE.MeshStandardMaterial({
+            color: new THREE.Color(colorHex),
+            metalness: 0.12,
+            roughness: 0.35,
+            transparent: true,
+            opacity: index === 0 ? 0.95 : 0.78,
+            depthWrite: false,
+        }),
+    )
+    marker.position.copy(position)
+    return marker
+}
+
+export default function ViewerPanel({
+    currentTcpName = 'tcp_gripper_A',
+    viewerHeight = DEFAULT_VIEWER_HEIGHT,
+    plannedJointTrajectory = [],
+    planPreviewLabel = '',
+}) {
     const viewerRef = useRef(null)
     const effectRunIdRef = useRef(0)
     const currentTcpNameRef = useRef(currentTcpName)
+    const plannedJointTrajectoryRef = useRef(plannedJointTrajectory)
+    const planPreviewLabelRef = useRef(planPreviewLabel)
     const refreshToolVisualRef = useRef(null)
+    const refreshPlanPreviewRef = useRef(null)
     const loadToolOffsetsRef = useRef(null)
     const toolOffsetsRef = useRef({})
     const linkNodesRef = useRef(new Map())
@@ -117,6 +142,12 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
             refreshToolVisualRef.current?.()
         }
     }, [currentTcpName])
+
+    useEffect(() => {
+        plannedJointTrajectoryRef.current = plannedJointTrajectory
+        planPreviewLabelRef.current = planPreviewLabel
+        refreshPlanPreviewRef.current?.()
+    }, [plannedJointTrajectory, planPreviewLabel])
 
     useEffect(() => {
         if (!viewerRef.current) return
@@ -136,6 +167,8 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
         const jointNodes = new Map()
         const latestJointPositions = new Map()
         const linkNodes = linkNodesRef.current
+        let robotRoot = null
+        let planPreviewGroup = null
         const colladaLoader = new ColladaLoader()
         const stlLoader = new STLLoader()
         linkNodes.clear()
@@ -218,6 +251,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
                     roughness: 0.4,
                 }),
             )
+            tcpMarker.name = 'tcp-marker'
             tcpMarker.position.copy(tcpVector)
             group.add(tcpMarker)
 
@@ -226,6 +260,93 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
             pushDebug(`TCP visual: ${tcpName} (${xMm.toFixed?.(1) ?? xMm}, ${yMm.toFixed?.(1) ?? yMm}, ${zMm.toFixed?.(1) ?? zMm} mm)`)
         }
         refreshToolVisualRef.current = refreshToolVisual
+
+        const applyJointPositionsToNodes = (nodes, positions) => {
+            nodes.forEach((jointNode) => {
+                jointNode.quaternion.copy(jointNode.userData.baseQuaternion)
+            })
+
+            positions.forEach((value, jointName) => {
+                const jointNode = nodes.get(jointName)
+                if (!jointNode) return
+
+                const axis = jointNode.userData.axis
+                if (!axis || axis.lengthSq() === 0) return
+
+                const q = new THREE.Quaternion().setFromAxisAngle(axis, value)
+                jointNode.quaternion.multiply(q)
+            })
+        }
+
+        const normalizePlanWaypoints = () => {
+            if (!Array.isArray(plannedJointTrajectoryRef.current)) return []
+            return plannedJointTrajectoryRef.current
+                .filter((waypoint) => waypoint && Array.isArray(waypoint.positions))
+                .map((waypoint) => ({
+                    label: waypoint.label,
+                    positions: new Map(
+                        waypoint.jointNames.map((name, index) => [name, waypoint.positions[index] ?? 0]),
+                    ),
+                }))
+        }
+
+        const refreshPlanPreview = () => {
+            if (!scene || !robotRoot) return
+
+            if (planPreviewGroup) {
+                scene.remove(planPreviewGroup)
+                planPreviewGroup.traverse((child) => {
+                    if (child.isMesh || child.isLine) {
+                        child.geometry?.dispose?.()
+                        if (Array.isArray(child.material)) child.material.forEach((material) => material.dispose?.())
+                        else child.material?.dispose?.()
+                    }
+                })
+                planPreviewGroup = null
+            }
+
+            const waypoints = normalizePlanWaypoints()
+            if (waypoints.length === 0) return
+
+            const overlayGroup = new THREE.Group()
+            overlayGroup.name = 'plan-preview-group'
+            const liveJointPositions = new Map(latestJointPositions)
+            const pathPoints = []
+
+            const previewAnchor = () => {
+                const tcpMarker = toolVisualGroupRef.current?.getObjectByName?.('tcp-marker')
+                return tcpMarker || linkNodes.get('link_6') || robotRoot
+            }
+
+            waypoints.forEach((waypoint, index) => {
+                applyJointPositionsToNodes(jointNodes, waypoint.positions)
+                scene.updateMatrixWorld(true)
+
+                const worldPosition = new THREE.Vector3()
+                previewAnchor().getWorldPosition(worldPosition)
+                pathPoints.push(worldPosition.clone())
+                overlayGroup.add(createPlanWaypoint(worldPosition, PLAN_COLORS[index % PLAN_COLORS.length], index))
+            })
+
+            applyJointPositionsToNodes(jointNodes, liveJointPositions)
+            scene.updateMatrixWorld(true)
+
+            if (pathPoints.length >= 2) {
+                const line = new THREE.Line(
+                    new THREE.BufferGeometry().setFromPoints(pathPoints),
+                    new THREE.LineBasicMaterial({
+                        color: new THREE.Color('#93c5fd'),
+                        transparent: true,
+                        opacity: 0.9,
+                    }),
+                )
+                overlayGroup.add(line)
+            }
+
+            planPreviewGroup = overlayGroup
+            scene.add(overlayGroup)
+        }
+        refreshPlanPreviewRef.current = refreshPlanPreview
 
         const loadToolOffsets = async () => {
             try {
@@ -441,18 +562,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
         }
 
         const applyJointStates = () => {
-            for (const [jointName, value] of latestJointPositions.entries()) {
-                const jointNode = jointNodes.get(jointName)
-                if (!jointNode) continue
-
-                jointNode.quaternion.copy(jointNode.userData.baseQuaternion)
-
-                const axis = jointNode.userData.axis
-                if (!axis || axis.lengthSq() === 0) continue
-
-                const q = new THREE.Quaternion().setFromAxisAngle(axis, value)
-                jointNode.quaternion.multiply(q)
-            }
+            applyJointPositionsToNodes(jointNodes, latestJointPositions)
         }
 
         const buildRobotFromUrdf = (urdfText) => {
@@ -462,7 +572,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
             linkNodes.clear()
 
             const urdfModel = new ROSLIB.UrdfModel({ string: urdfText })
-            const robotRoot = new THREE.Group()
+            robotRoot = new THREE.Group()
             robotRoot.name = 'robot-root'
             scene.add(robotRoot)
 
@@ -543,6 +653,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
 
             applyJointStates()
             refreshToolVisual()
+            refreshPlanPreview()
 
             pushDebug(`URDF parsed: ${Object.keys(urdfModel.links).length} links, ${Object.keys(urdfModel.joints).length} joints`)
             setViewerStatus('Robot model loaded')
@@ -646,6 +757,7 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
 
         return () => {
             refreshToolVisualRef.current = null
+            refreshPlanPreviewRef.current = null
             loadToolOffsetsRef.current = null
             toolVisualGroupRef.current = null
             linkNodes.clear()
@@ -716,6 +828,21 @@ export default function ViewerPanel({ currentTcpName = 'tcp_gripper_A', viewerHe
                 >
                     View: `joint_states + robot_description` | {viewerStatus}
                 </div>
+
+                {plannedJointTrajectory.length > 0 && (
+                    <div
+                        style={{
+                            background: 'rgba(0,0,0,0.56)',
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            fontSize: '0.72rem',
+                            color: '#d7e7ff',
+                            maxWidth: 320,
+                        }}
+                    >
+                        Plan preview: {planPreviewLabel || `${plannedJointTrajectory.length} waypoint(s)`}
+                    </div>
+                )}
 
                 {debugLines.length > 0 && (
                     <div

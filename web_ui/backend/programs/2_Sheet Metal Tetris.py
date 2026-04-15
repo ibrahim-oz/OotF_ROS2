@@ -16,6 +16,10 @@ TRIGGER_COMMAND = "100;1"
 POSE_COMMAND = "124"
 
 BACKEND = "http://localhost:8000"
+AUTH_USERNAME = "affix"
+AUTH_PASSWORD = "AImatters"
+
+session = requests.Session()
 
 PRE_PICK_Z = 80.0
 PRE_PLACE_Z = 80.0
@@ -97,8 +101,19 @@ def offset_z(p, dz):
     return q
 
 
+def login():
+    r = session.post(
+        f"{BACKEND}/api/auth/login",
+        json={"username": AUTH_USERNAME, "password": AUTH_PASSWORD},
+        timeout=10,
+    )
+    if not r.json().get("success"):
+        raise Exception(f"Login failed: {r.json()}")
+    tp("Authenticated with backend.")
+
+
 def get_tcp():
-    r = requests.get(f"{BACKEND}/api/tcp", timeout=10).json()
+    r = session.get(f"{BACKEND}/api/tcp", timeout=10).json()
 
     if "x" not in r:
         raise Exception(f"TCP read failed: {r}")
@@ -113,7 +128,7 @@ def get_tcp():
 def movej(j, vel=50, acc=80):
     before = get_tcp()
 
-    r = requests.post(
+    r = session.post(
         f"{BACKEND}/api/move/joint",
         json={
             "pos": j,
@@ -136,7 +151,7 @@ def movejx(p, ref=0, vel=30, acc=60):
     before = get_tcp()
 
     for sol in [2, 1, 0, 3]:
-        r = requests.post(
+        r = session.post(
             f"{BACKEND}/api/move/jointx",
             json={
                 "pos": p,
@@ -160,7 +175,7 @@ def movejx(p, ref=0, vel=30, acc=60):
 
 
 def movel(p, ref=0):
-    r = requests.post(
+    r = session.post(
         f"{BACKEND}/api/move/tcp",
         json={
             "pos": p,
@@ -177,7 +192,7 @@ def movel(p, ref=0):
 
 
 def set_ref(ref):
-    r = requests.post(
+    r = session.post(
         f"{BACKEND}/api/ref",
         json={"coord": ref},
         timeout=10,
@@ -229,6 +244,7 @@ def vacuum(on=True):
 
 def main():
     tp("=== SHEET METALS START ===")
+    login()
 
     # --------------------------------------------------------------
     # 0. STATION SELECTOR
